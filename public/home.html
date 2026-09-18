@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Material+Icons">
+  <link rel="stylesheet" href="styles/bootstrap-material-design.min.css">
+  <link rel="stylesheet" href="styles/main.css">
+  <title>Bill Splitter - Home</title>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark fixed-top w-100">
+    <div class="dropdown">
+        <button class="btn text-light dropdown-toggle" type="button" id="hamburger" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+        <i class="material-icons">menu</i>
+        </button>
+        <div class="dropdown-menu" aria-labelledby="hamburger">
+        <a class="dropdown-item" href="/home.html">Home</a>
+        <a class="dropdown-item" href="/history.html">Payment History</a>
+        <a class="dropdown-item" href="/unpaid.html">Unpaid Bill</a>
+        <div class="dropdown-divider"></div>
+        <button id="menuSignOut" class="dropdown-item">Sign out</button>
+        </div>
+    </div>
+
+    <a class="navbar-brand ml-2" href="/home.html">Bill Splitter</a>
+    </nav>
+
+
+  <div id="homePage" class="container page-container">
+    <h3 id="helloUser" class="mb-4">Hello</h3>
+
+    <div class="row">
+      <div class="col-12 col-md-4 mb-3">
+        <button id="btnCreateBill" class="btn btn-primary btn-block btn-lg">
+          <i class="material-icons">add_circle</i> Create Bill
+        </button>
+      </div>
+      
+      <div class="col-12 col-md-4 mb-3">
+        <button id="btnHistory" class="btn btn-secondary btn-block btn-lg">
+          <i class="material-icons">history</i> Payment History
+        </button>
+      </div>
+
+      <div class="col-12 col-md-4 mb-3">
+        <button id="btnUnpaid" class="btn btn-warning btn-block btn-lg">
+          <i class="material-icons">warning</i> Unpaid Bill
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/jquery.min.js"></script>
+  <script src="scripts/popper.js"></script>
+  <script src="scripts/bootstrap-material-design.js"></script>
+  <script>$("body").bootstrapMaterialDesign();</script>
+  <script src="/__/firebase/7.18.0/firebase-app.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-analytics.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-auth.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-firestore.js"></script>
+  <script src="/__/firebase/init.js"></script>
+  <script src="scripts/main.js"></script>
+</body>
+</html>

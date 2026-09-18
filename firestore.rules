@@ -1,0 +1,98 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function nullableString(value) {
+      return value == null || value is string;
+    }
+
+    function validProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'phoneNumber', 'photoURL', 'lastSeen'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'phoneNumber', 'photoURL', 'lastSeen'
+        ])
+        && data.uid == userId
+        && nullableString(data.email)
+        && nullableString(data.displayName)
+        && nullableString(data.phoneNumber)
+        && nullableString(data.photoURL)
+        && data.lastSeen == request.time;
+    }
+
+    function validBill(data) {
+      return data.keys().hasAll([
+          'title', 'date', 'amountCents', 'payerUid', 'debtors',
+          'splitType', 'shares', 'paid', 'status', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'date', 'amountCents', 'payerUid', 'debtors',
+          'splitType', 'shares', 'paid', 'status', 'createdAt', 'lastUpdated'
+        ])
+        && data.title is string && data.title.size() > 0
+        && data.date is timestamp
+        && data.amountCents is int && data.amountCents > 0
+        && data.payerUid is string
+        && data.debtors is list && data.debtors.size() > 0
+        && data.debtors.toSet().size() == data.debtors.size()
+        && !(data.payerUid in data.debtors)
+        && data.splitType in ['equal', 'percent']
+        && data.shares is map
+        && data.shares.keys().hasAll(data.debtors)
+        && data.shares.keys().hasOnly(data.debtors)
+        && data.paid is map
+        && data.paid.keys().hasAll(data.debtors)
+        && data.paid.keys().hasOnly(data.debtors)
+        && data.paid.values().hasOnly([true, false])
+        && data.status == 'open'
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId} {
+      // The existing participant picker and reminders use this signed-in directory.
+      // Profile fields, including contacts, remain visible to other signed-in users.
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && validProfile(request.resource.data, userId);
+      allow delete: if false;
+    }
+
+    match /bills/{billId} {
+      // Keep these conditions compatible with payerUid == uid and
+      // debtors array-contains uid queries. Rules do not filter query results.
+      allow read: if signedIn()
+        && (resource.data.payerUid == request.auth.uid
+          || request.auth.uid in resource.data.debtors);
+
+      allow create: if signedIn()
+        && request.resource.data.payerUid == request.auth.uid
+        && validBill(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && (!('lastUpdated' in request.resource.data)
+          || request.resource.data.lastUpdated == request.time);
+
+      // Only the original payer can edit the bill or confirm repayments.
+      // Neither ownership nor creation metadata can be transferred by a client.
+      allow update: if signedIn()
+        && resource.data.payerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'date', 'amountCents', 'debtors', 'splitType',
+          'shares', 'paid', 'lastUpdated'
+        ])
+        && validBill(request.resource.data)
+        && request.resource.data.lastUpdated == request.time;
+      allow delete: if false;
+    }
+
+    // No client feature uses other collections or subcollections.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

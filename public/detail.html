@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Material+Icons">
+  <link rel="stylesheet" href="styles/bootstrap-material-design.min.css">
+  <link rel="stylesheet" href="styles/main.css">
+  <title>Bill - Detail</title>
+</head>
+
+<body>
+  <nav class="navbar navbar-dark fixed-top w-100">
+    <div class="dropdown">
+        <button class="btn text-light dropdown-toggle" type="button" id="hamburger" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+        <i class="material-icons">menu</i>
+        </button>
+        <div class="dropdown-menu" aria-labelledby="hamburger">
+        <a class="dropdown-item" href="/home.html">Home</a>
+        <a class="dropdown-item" href="/history.html">Payment History</a>
+        <a class="dropdown-item" href="/unpaid.html">Unpaid Bill</a>
+        <div class="dropdown-divider"></div>
+        <button id="menuSignOut" class="dropdown-item">Sign out</button>
+        </div>
+    </div>
+    <a class="navbar-brand ml-2" href="/home.html"><span id="navBillTitle">Bill</span></a>
+    </nav>
+
+
+  <div id="detailPage" class="container page-container">
+    <h4 class="mb-3" id="billTitleHeading">Bill</h4>
+
+    <div class="form-group">
+      <label class="bmd-label-floating" for="inputTitle">Title</label>
+      <input type="text" class="form-control" id="inputTitle" disabled>
+    </div>
+
+    <div class="form-group">
+      <label class="bmd-label-floating" for="inputDate">Date</label>
+      <input type="date" class="form-control" id="inputDate" disabled>
+    </div>
+
+    <div class="form-group">
+      <label class="bmd-label-floating">Payer</label>
+      <input type="text" class="form-control" id="inputPayer" disabled>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group col-md-6">
+        <label class="bmd-label-floating" for="inputAmount">Amount (e.g., 120.50)</label>
+        <input type="number" step="0.01" class="form-control" id="inputAmount" disabled>
+      </div>
+      <div class="form-group col-md-6">
+        <label class="bmd-label-floating">Split Type</label>
+        <select id="selectSplitType" class="form-control" disabled>
+          <option value="equal">Equal</option>
+          <option value="percent">Custom Percent</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="bmd-label-floating" for="selectDebtors">Debtors</label>
+      <select id="selectDebtors" class="form-control" multiple disabled></select>
+      <small class="form-text text-muted">hold Ctrl could choose multiple</small>
+    </div>
+
+    <div id="percentList" class="mb-3" style="display:none;">
+      <label>Separate Percent (must sum to 100%)</label>
+      <div id="percentRows"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="bmd-label-floating">Current Status</label>
+      <div id="debtorStatusList"></div>
+      <small class="form-text text-muted">check = already transfered；didn't transfer click Remind。</small>
+    </div>
+
+    <div class="d-flex justify-content-between mt-3">
+      <button id="btnBack" class="btn btn-secondary">Back</button>
+      <div>
+        <button id="btnEdit" class="btn btn-outline-primary">Edit</button>
+        <button id="btnSave" class="btn btn-primary" style="display:none;">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="remindModal" tabindex="-1" role="dialog" aria-labelledby="remindModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title" id="remindModalTitle">Reminder sent</h5></div>
+        <div class="modal-body" id="remindModalBody">A reminder was opened in your email/SMS app.</div>
+        <div class="modal-footer"><button type="button" class="btn btn-primary" data-dismiss="modal">Back</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/jquery.min.js"></script>
+  <script src="scripts/popper.js"></script>
+  <script src="scripts/bootstrap-material-design.js"></script>
+  <script>$("body").bootstrapMaterialDesign();</script>
+  <script src="/__/firebase/7.18.0/firebase-app.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-analytics.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-auth.js"></script>
+  <script src="/__/firebase/7.18.0/firebase-firestore.js"></script>
+  <script src="/__/firebase/init.js"></script>
+  <script src="scripts/rosefire.min.js"></script>
+  <script src="scripts/main.js"></script>
+</body>
+</html>
