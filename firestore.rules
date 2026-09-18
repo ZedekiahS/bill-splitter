@@ -90,7 +90,287 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // No client feature uses other collections or subcollections.
+    function exactFields(data, fields) {
+      return data.keys().hasAll(fields) && data.keys().hasOnly(fields);
+    }
+
+    function accountSignedIn() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function ledgerPath(ledgerId) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId);
+    }
+
+    function memberPath(ledgerId, memberId) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId)/members/$(memberId);
+    }
+
+    function expensePath(ledgerId, expenseId) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId)/expenses/$(expenseId);
+    }
+
+    function paymentPath(ledgerId, paymentId) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId)/payments/$(paymentId);
+    }
+
+    function invitePath(token) {
+      return /databases/$(database)/documents/invites/$(token);
+    }
+
+    function claimPath(token, uid) {
+      return /databases/$(database)/documents/invites/$(token)/claims/$(uid);
+    }
+
+    function ledgerMember(ledgerId) {
+      return accountSignedIn() && request.auth.uid in get(ledgerPath(ledgerId)).data.memberUids;
+    }
+
+    function ledgerOwner(ledgerId) {
+      return accountSignedIn() && get(ledgerPath(ledgerId)).data.ownerUid == request.auth.uid;
+    }
+
+    function receiver(ledgerId, expense) {
+      return ledgerMember(ledgerId) && (ledgerOwner(ledgerId)
+        || get(memberPath(ledgerId, expense.payerMemberId)).data.uid == request.auth.uid);
+    }
+
+    function positiveCents(amount) {
+      return amount is int && amount > 0 && amount <= 9007199254740991;
+    }
+
+    function calendarDate(date) {
+      return date is string && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function validShareAt(ledgerId, data, ids, index) {
+      return ids.size() <= index || (data.shares[ids[index]] is int
+        && data.shares[ids[index]] >= 0
+        && data.shares[ids[index]] <= data.amountCents
+        && get(memberPath(ledgerId, ids[index])).data.name is string);
+    }
+
+    function shareAt(data, ids, index) {
+      return ids.size() > index ? data.shares[ids[index]] : 0;
+    }
+
+    // Rules cannot iterate arbitrary maps. Eight participants leave room for
+    // the ledger and a separate payer within the ten-document access limit.
+    // This bounds each expense, not the number of members in a ledger.
+    function validExpenseShares(ledgerId, data) {
+      let ids = data.shares.keys();
+      return ids.size() > 0 && ids.size() <= 8
+        && validShareAt(ledgerId, data, ids, 0) && validShareAt(ledgerId, data, ids, 1)
+        && validShareAt(ledgerId, data, ids, 2) && validShareAt(ledgerId, data, ids, 3)
+        && validShareAt(ledgerId, data, ids, 4) && validShareAt(ledgerId, data, ids, 5)
+        && validShareAt(ledgerId, data, ids, 6) && validShareAt(ledgerId, data, ids, 7)
+        && shareAt(data, ids, 0) + shareAt(data, ids, 1) + shareAt(data, ids, 2)
+          + shareAt(data, ids, 3) + shareAt(data, ids, 4) + shareAt(data, ids, 5)
+          + shareAt(data, ids, 6) + shareAt(data, ids, 7) <= data.amountCents;
+    }
+
+    function approvedInvite(token, ledgerId, memberId, uid) {
+      let before = get(invitePath(token)).data;
+      let after = getAfter(invitePath(token)).data;
+      return before.status == 'open' && before.expiresAt > request.time
+        && after.status == 'accepted' && after.acceptedUid == uid
+        && after.ledgerId == ledgerId && after.memberId == memberId
+        && getAfter(claimPath(token, uid)).data.status == 'approved';
+    }
+
+    match /ledgers/{ledgerId} {
+      allow read: if accountSignedIn() && request.auth.uid in resource.data.memberUids;
+      allow create: if accountSignedIn()
+        && exactFields(request.resource.data, [
+          'ownerUid', 'memberUids', 'title', 'currency', 'createdAt', 'lastApprovedInviteId'
+        ])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid]
+        && request.resource.data.title is string && request.resource.data.title.size() > 0
+        && request.resource.data.currency is string && request.resource.data.currency.matches('^[A-Z]{3}$')
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.lastApprovedInviteId == null;
+
+      // Membership is granted only by the owner's atomic invitation approval.
+      allow update: if accountSignedIn() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'lastApprovedInviteId'])
+        && request.resource.data.lastApprovedInviteId is string
+        && approveLedgerMember(ledgerId, request.resource.data.lastApprovedInviteId);
+      allow delete: if false;
+
+      function approveLedgerMember(id, token) {
+        let invitation = getAfter(invitePath(token)).data;
+        let uid = invitation.acceptedUid;
+        return approvedInvite(token, id, invitation.memberId, uid)
+          && uid is string && !(uid in resource.data.memberUids)
+          && request.resource.data.memberUids is list
+          && request.resource.data.memberUids.size() == resource.data.memberUids.size() + 1
+          && request.resource.data.memberUids.toSet() == resource.data.memberUids.toSet().union([uid].toSet())
+          && getAfter(memberPath(id, invitation.memberId)).data.uid == uid
+          && getAfter(memberPath(id, invitation.memberId)).data.claimInviteId == token;
+      }
+
+      match /members/{memberId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if accountSignedIn() && getAfter(ledgerPath(ledgerId)).data.ownerUid == request.auth.uid
+          && exactFields(request.resource.data, ['name', 'uid', 'createdAt', 'claimInviteId'])
+          && request.resource.data.name is string && request.resource.data.name.size() > 0
+          && ((memberId != 'owner' && request.resource.data.uid == null)
+            || (memberId == 'owner' && request.resource.data.uid == request.auth.uid))
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.claimInviteId == null;
+        allow update: if ledgerOwner(ledgerId) && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+            && request.resource.data.name is string && request.resource.data.name.size() > 0)
+          || (resource.data.uid == null && request.resource.data.uid is string
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'claimInviteId'])
+            && approvedInvite(request.resource.data.claimInviteId, ledgerId, memberId, request.resource.data.uid)
+            && getAfter(ledgerPath(ledgerId)).data.lastApprovedInviteId == request.resource.data.claimInviteId
+            && request.resource.data.uid in getAfter(ledgerPath(ledgerId)).data.memberUids)
+        );
+        allow delete: if false;
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if ledgerMember(ledgerId)
+          && exactFields(request.resource.data, [
+            'title', 'date', 'amountCents', 'payerMemberId', 'shares', 'repaid',
+            'status', 'createdByUid', 'createdAt', 'lastPaymentId', 'reversedAt'
+          ])
+          && request.resource.data.title is string && request.resource.data.title.size() > 0
+          && calendarDate(request.resource.data.date)
+          && positiveCents(request.resource.data.amountCents)
+          && request.resource.data.payerMemberId is string
+          && get(memberPath(ledgerId, request.resource.data.payerMemberId)).data.name is string
+          && (ledgerOwner(ledgerId)
+            || get(memberPath(ledgerId, request.resource.data.payerMemberId)).data.uid == request.auth.uid)
+          && request.resource.data.shares is map && validExpenseShares(ledgerId, request.resource.data)
+          && request.resource.data.repaid is map
+          && request.resource.data.repaid.keys().toSet() == request.resource.data.shares.keys().toSet()
+          && request.resource.data.repaid.values().hasOnly([0])
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdByUid == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.lastPaymentId == null && request.resource.data.reversedAt == null;
+        allow update: if receiver(ledgerId, resource.data) && resource.data.status == 'active' && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reversedAt'])
+            && resource.data.repaid.values().hasOnly([0])
+            && request.resource.data.status == 'reversed' && request.resource.data.reversedAt == request.time)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['repaid', 'lastPaymentId'])
+            && request.resource.data.lastPaymentId is string
+            && validPaymentTransition(ledgerId, expenseId, request.resource.data.lastPaymentId))
+        );
+        allow delete: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if receiver(ledgerId, get(expensePath(ledgerId, request.resource.data.expenseId)).data)
+          && validPaymentTransition(ledgerId, request.resource.data.expenseId, paymentId);
+        allow update: if receiver(ledgerId, get(expensePath(ledgerId, resource.data.expenseId)).data)
+          && resource.data.type == 'payment' && resource.data.reversedBy == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reversedBy'])
+          && request.resource.data.reversedBy is string
+          && getAfter(paymentPath(ledgerId, request.resource.data.reversedBy)).data.reversesId == paymentId
+          && validPaymentTransition(ledgerId, resource.data.expenseId, request.resource.data.reversedBy);
+        allow delete: if false;
+      }
+    }
+
+    // Both sides must be committed together: no standalone journal, balance
+    // overwrite, duplicate journal use, or repayment beyond the outstanding share.
+    function validPaymentTransition(ledgerId, expenseId, paymentId) {
+      let before = get(expensePath(ledgerId, expenseId)).data;
+      let after = getAfter(expensePath(ledgerId, expenseId)).data;
+      let payment = getAfter(paymentPath(ledgerId, paymentId)).data;
+      let debtor = payment.fromMemberId;
+      return !exists(paymentPath(ledgerId, paymentId))
+        && exactFields(payment, [
+          'expenseId', 'fromMemberId', 'toMemberId', 'amountCents', 'date', 'note',
+          'type', 'reversesId', 'reversedBy', 'createdByUid', 'createdAt'
+        ])
+        && payment.expenseId == expenseId && payment.toMemberId == before.payerMemberId
+        && debtor is string && debtor != before.payerMemberId && debtor in before.shares
+        && exists(memberPath(ledgerId, debtor))
+        && positiveCents(payment.amountCents) && before.shares[debtor] is int
+        && calendarDate(payment.date) && payment.note is string
+        && payment.createdByUid == request.auth.uid && payment.createdAt == request.time
+        && payment.reversedBy == null && before.status == 'active' && after.status == 'active'
+        && after.lastPaymentId == paymentId
+        && after.diff(before).affectedKeys().hasOnly(['repaid', 'lastPaymentId'])
+        && after.repaid is map && before.repaid[debtor] is int && after.repaid[debtor] is int
+        && after.repaid.diff(before.repaid).affectedKeys().hasOnly([debtor])
+        && after.repaid.keys().toSet() == before.repaid.keys().toSet()
+        && after.repaid[debtor] >= 0 && after.repaid[debtor] <= before.shares[debtor]
+        && ((payment.type == 'payment' && payment.reversesId == null
+            && after.repaid[debtor] == before.repaid[debtor] + payment.amountCents)
+          || (payment.type == 'reversal' && payment.reversesId is string
+            && validPaymentReversal(ledgerId, paymentId, payment)
+            && after.repaid[debtor] == before.repaid[debtor] - payment.amountCents));
+    }
+
+    function validPaymentReversal(ledgerId, paymentId, payment) {
+      let original = get(paymentPath(ledgerId, payment.reversesId)).data;
+      let updated = getAfter(paymentPath(ledgerId, payment.reversesId)).data;
+      return original.type == 'payment' && original.reversedBy == null
+        && original.expenseId == payment.expenseId
+        && original.fromMemberId == payment.fromMemberId && original.toMemberId == payment.toMemberId
+        && original.amountCents == payment.amountCents
+        && updated.reversedBy == paymentId
+        && updated.diff(original).affectedKeys().hasOnly(['reversedBy']);
+    }
+
+    match /invites/{token} {
+      // A token reveals only the invitation's small preview, never ledger data.
+      allow get: if accountSignedIn() && (resource.data.ownerUid == request.auth.uid
+        || resource.data.acceptedUid == request.auth.uid
+        || (resource.data.status == 'open' && resource.data.expiresAt > request.time));
+      allow list: if accountSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if ledgerOwner(request.resource.data.ledgerId) && token.size() >= 32
+        && exactFields(request.resource.data, [
+          'ledgerId', 'ownerUid', 'memberId', 'memberName', 'ledgerTitle',
+          'status', 'createdAt', 'expiresAt', 'acceptedUid'
+        ])
+        && request.resource.data.ownerUid == request.auth.uid
+        && get(memberPath(request.resource.data.ledgerId, request.resource.data.memberId)).data.uid == null
+        && request.resource.data.memberName == get(memberPath(request.resource.data.ledgerId, request.resource.data.memberId)).data.name
+        && request.resource.data.ledgerTitle == get(ledgerPath(request.resource.data.ledgerId)).data.title
+        && request.resource.data.status == 'open' && request.resource.data.acceptedUid == null
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp && request.resource.data.expiresAt > request.time;
+      allow update: if accountSignedIn() && resource.data.ownerUid == request.auth.uid
+        && resource.data.status == 'open' && resource.data.expiresAt > request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedUid'])
+        && request.resource.data.status == 'accepted' && request.resource.data.acceptedUid is string
+        && get(claimPath(token, request.resource.data.acceptedUid)).data.status == 'pending'
+        && getAfter(claimPath(token, request.resource.data.acceptedUid)).data.status == 'approved'
+        && get(memberPath(resource.data.ledgerId, resource.data.memberId)).data.uid == null
+        && getAfter(memberPath(resource.data.ledgerId, resource.data.memberId)).data.uid == request.resource.data.acceptedUid
+        && getAfter(memberPath(resource.data.ledgerId, resource.data.memberId)).data.claimInviteId == token
+        && getAfter(ledgerPath(resource.data.ledgerId)).data.lastApprovedInviteId == token
+        && request.resource.data.acceptedUid in getAfter(ledgerPath(resource.data.ledgerId)).data.memberUids;
+      allow delete: if false;
+
+      match /claims/{uid} {
+        allow read: if accountSignedIn() && (request.auth.uid == uid || get(invitePath(token)).data.ownerUid == request.auth.uid);
+        allow create: if accountSignedIn() && request.auth.uid == uid
+          && exactFields(request.resource.data, ['uid', 'displayName', 'status', 'createdAt'])
+          && request.resource.data.uid == uid
+          && request.resource.data.displayName is string && request.resource.data.displayName.size() > 0
+          && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+          && get(invitePath(token)).data.status == 'open' && get(invitePath(token)).data.expiresAt > request.time;
+        allow update: if accountSignedIn() && get(invitePath(token)).data.ownerUid == request.auth.uid
+          && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'approved'
+          && getAfter(invitePath(token)).data.status == 'accepted'
+          && getAfter(invitePath(token)).data.acceptedUid == uid;
+        allow delete: if false;
+      }
+    }
+
+    // Unrecognized collections and nested documents remain closed.
     match /{document=**} {
       allow read, write: if false;
     }

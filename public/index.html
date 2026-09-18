@@ -1,58 +1,37 @@
 <!doctype html>
-<html lang="en">
-
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Material+Icons">
-  <link rel="stylesheet" href="styles/bootstrap-material-design.min.css">
-  <link rel="stylesheet" href="styles/main.css">
-  <title>Bill Splitter - Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#24594d">
+  <title>Bill Splitter · 一起记，轻松分</title>
+  <link rel="stylesheet" href="styles/app.css">
 </head>
-
-<body>
-  <nav class="navbar navbar-dark fixed-top">
-    <a class="navbar-brand" href="#">Bill Splitter</a>
-  </nav>
-  <div id="loginPage" class="container page-container text-center">
-    <h3 class="mb-4">Welcome</h3>
-
-    <div class="form-group">
-      <input type="email" class="form-control" id="inputEmail" placeholder="Email">
-    </div>
-    <div class="form-group">
-      <input type="password" class="form-control" id="inputPassword" placeholder="Password">
-    </div>
-    <button id="loginButton" class="btn btn-primary btn-block">Log In with Email</button>
-    <button id="signupButton" class="btn btn-secondary btn-block">Sign Up with Email</button>
-
-    <div class="form-group mt-4">
-      <input type="text" class="form-control" id="phoneNumber" placeholder="Phone number with country code">
-    </div>
-    <div id="recaptcha-container"></div>
-    <button id="phoneButton" class="btn btn-info btn-block">Sign In with Phone</button>
-
-    <button id="guestButton" class="btn btn-dark btn-block mt-4">Continue as Guest</button>
-
-    <hr>
-    <button id="rosefireButton" type="button" class="btn btn-danger btn-outline">
-      <i class="material-icons">school</i> Sign in with Rosefire
-    </button>
-  </div>
-
-
-  </div>
-  <script src="scripts/jquery.min.js"></script>
-  <script src="scripts/popper.js"></script>
-  <script src="scripts/bootstrap-material-design.js"></script>
-  <script>$("body").bootstrapMaterialDesign();</script>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-aside">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">b.</span><span>Bill Splitter<small>一起记，轻松分。</small></span></a>
+      <div><h1>和朋友，<br>把每笔小账记清。</h1><p>一次旅行、一顿聚餐、一屋子的日常。<br>记录共同开销，看清每个人的份额，慢慢结清。</p></div>
+      <div><a class="button secondary" href="app.html?demo=1">先试着记一笔 →</a><p class="form-hint">无需注册，先试试一起记账。</p></div>
+    </section>
+    <section id="loginPage" class="login-panel">
+      <div class="login-form"><h2>欢迎回来</h2><p class="muted">登录后，继续你们共同的账本。</p>
+        <form id="emailLoginForm">
+          <label class="form-field"><span class="field-label">邮箱</span><input class="form-input" type="email" id="inputEmail" autocomplete="username" placeholder="you@example.com" required></label>
+          <label class="form-field"><span class="field-label">密码</span><input class="form-input" type="password" id="inputPassword" autocomplete="current-password" required></label>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="loginButton" type="submit" class="button primary full-width">登录并继续</button>
+        </form>
+        <button id="signupButton" type="button" class="button quiet full-width">注册新账号</button>
+        <details class="legacy-login"><summary>已有学校账号</summary><p class="form-hint">保留原账号入口，方便访问以前的账目。</p><button id="rosefireButton" type="button" class="button secondary full-width">使用原 Rosefire 账号</button></details>
+      </div>
+    </section>
+  </main>
   <script src="/__/firebase/7.18.0/firebase-app.js"></script>
-  <script src="/__/firebase/7.18.0/firebase-analytics.js"></script>
   <script src="/__/firebase/7.18.0/firebase-auth.js"></script>
   <script src="/__/firebase/7.18.0/firebase-firestore.js"></script>
   <script src="/__/firebase/init.js"></script>
   <script src="scripts/rosefire.min.js"></script>
   <script src="scripts/main.js"></script>
 </body>
-
 </html>

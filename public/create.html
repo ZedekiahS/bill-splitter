@@ -54,15 +54,15 @@
     </div>
 
     <div id="percentList" class="mb-3" style="display:none;">
-      <label>Separate Percent (must sum to 100%)</label>
+      <label>Custom percentages (total up to 100%)</label>
       <div id="percentRows"></div>
-      <small id="percentHint" class="form-text text-muted">example：both 50；or A=70、B=30。</small>
+      <small id="percentHint" class="form-text text-muted">Enter 0–100 for each debtor, up to 2 decimal places. The total must be above 0%; the payer covers any remainder. For example: 50 / 50 or 25 / 25.</small>
     </div>
 
     <div id="recRow" class="form-row">
       <div class="form-group col-md-6">
         <label class="bmd-label-floating" for="inputAmount">Amount (e.g., 120.50)</label>
-        <input type="number" step="0.01" class="form-control" id="inputAmount" placeholder="0.00">
+        <input type="number" min="0.01" step="0.01" class="form-control" id="inputAmount" placeholder="0.00">
       </div>
       <div class="form-group col-md-6">
         <label class="bmd-label-floating">Split Type</label>

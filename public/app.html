@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#24594d">
+  <meta name="color-scheme" content="light">
+  <title>Bill Splitter · 共同账本</title>
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <div id="app" class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="app.html"><span class="brand-mark" aria-hidden="true">b.</span><span>Bill Splitter<small>一起记，轻松分。</small></span></a>
+      <nav class="primary-nav" id="primary-nav"></nav>
+      <div class="sidebar-ledgers"><div class="section-label"><span>我的账本</span><button class="icon-button" data-action="new-ledger" aria-label="新建账本">＋</button></div><div id="ledger-nav"></div></div>
+      <div class="sidebar-foot"><span class="avatar avatar-self">Z</span><div><strong id="account-name">正在加载</strong></div><button class="text-link" data-action="account" aria-label="登录与账号">账号</button></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><div class="scope-control"><span class="scope-label">当前账本</span><label class="sr-only" for="ledger-picker">选择账本</label><select id="ledger-picker" aria-label="选择账本"></select></div><div class="topbar-actions"><button class="icon-button" data-action="refresh" aria-label="刷新账本" title="刷新账本"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div></header>
+      <main id="main-content" class="main-content" tabindex="-1"><div class="loading-state" role="status">正在打开你的账本…</div></main>
+      <footer class="workspace-footer"><span>把账记清，把时间留给生活。</span></footer>
+    </div>
+    <nav class="mobile-nav" id="mobile-nav" aria-label="移动导航"></nav>
+  </div>
+  <dialog id="action-dialog" aria-labelledby="dialog-title"><div class="dialog-inner" id="dialog-content"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="scripts/app.mjs"></script>
+</body>
+</html>

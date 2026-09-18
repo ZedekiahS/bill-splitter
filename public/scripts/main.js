@@ -167,19 +167,31 @@ rhit.LoginPageController = class {
     if (roseBtn) roseBtn.addEventListener("click", () => rhit.fbAuthManager.signIn());
 
     const loginBtn = document.querySelector("#loginButton");
-    if (loginBtn) loginBtn.addEventListener("click", () => {
+    const showLoginError = message => {
+      const error = document.querySelector("#login-error");
+      if (error) { error.textContent = message; error.hidden = false; }
+      else alert(message);
+    };
+    const emailLogin = async event => {
+      event.preventDefault();
       const email = (document.querySelector("#inputEmail")?.value || "").trim();
       const pw = document.querySelector("#inputPassword")?.value || "";
-      if (!email || !pw) { alert("Email and password required."); return; }
-      firebase.auth().signInWithEmailAndPassword(email, pw).catch(err => alert(err.message));
-    });
+      if (!email || !pw) { showLoginError("请填写邮箱与密码。"); return; }
+      loginBtn.disabled = true; loginBtn.textContent = "正在登录…";
+      try { await firebase.auth().signInWithEmailAndPassword(email, pw); }
+      catch (err) { showLoginError(err.message); }
+      finally { loginBtn.disabled = false; loginBtn.textContent = "登录并继续"; }
+    };
+    const loginForm = document.querySelector("#emailLoginForm");
+    if (loginForm) loginForm.addEventListener("submit", emailLogin);
+    else if (loginBtn) loginBtn.addEventListener("click", emailLogin);
 
     const signupBtn = document.querySelector("#signupButton");
     if (signupBtn) signupBtn.addEventListener("click", () => {
       const email = (document.querySelector("#inputEmail")?.value || "").trim();
       const pw = document.querySelector("#inputPassword")?.value || "";
-      if (!email || !pw) { alert("Email and password required."); return; }
-      firebase.auth().createUserWithEmailAndPassword(email, pw).catch(err => alert(err.message));
+      if (!email || !pw) { showLoginError("请填写邮箱与密码，再注册账号。"); return; }
+      firebase.auth().createUserWithEmailAndPassword(email, pw).catch(err => showLoginError(err.message));
     });
   }
 };
@@ -223,12 +235,15 @@ rhit.CreatePageController = class {
     if (saveBtn) saveBtn.addEventListener("click", () => this.handleSave());
   }
   updateDebtorSelect() {
-    const select = document.querySelector("#selectDebtors"); if (!select) return; select.innerHTML = "";
+    const select = document.querySelector("#selectDebtors"); if (!select) return;
+    const selected = new Set(Array.from(select.selectedOptions, option => option.value));
+    select.innerHTML = "";
     for (let i = 0; i < rhit.fbUsersManager.length; i++) {
       const u = rhit.fbUsersManager.getUserAtIndex(i);
       if (u.uid === rhit.fbAuthManager.uid) continue;
       const opt = document.createElement("option");
       opt.value = u.uid; opt.textContent = `${u.displayName}${u.email ? ` (${u.email})` : ""}`;
+      opt.selected = selected.has(u.uid);
       select.appendChild(opt);
     }
     this.refreshPercentRows();
@@ -239,13 +254,16 @@ rhit.CreatePageController = class {
     const wrapper = document.querySelector("#percentList");
     const rows = document.querySelector("#percentRows");
     if (!select || !wrapper || !rows) return;
+    const previous = this._percentDraft || (this._percentDraft = new Map());
+    document.querySelectorAll(".percent-input").forEach(e => previous.set(e.dataset.uid, e.value));
     const chosen = Array.from(select.selectedOptions).map(o => ({ uid: o.value, label: o.textContent }));
     if (splitType !== "percent" || chosen.length === 0) { wrapper.style.display = "none"; rows.innerHTML = ""; return; }
     wrapper.style.display = "block"; rows.innerHTML = "";
     chosen.forEach(c => {
       const div = document.createElement("div"); div.className = "form-group";
       div.innerHTML = `<label class="bmd-label-floating">${c.label}</label>
-        <input type="number" min="0" max="100" step="1" class="form-control percent-input" data-uid="${c.uid}" placeholder="0">`;
+        <input type="number" min="0" max="100" step="0.01" class="form-control percent-input" data-uid="${c.uid}" placeholder="0">`;
+      div.querySelector("input").value = previous.get(c.uid) ?? "";
       rows.appendChild(div);
     });
   }
@@ -258,35 +276,20 @@ rhit.CreatePageController = class {
       const debtorUids = Array.from(document.querySelector("#selectDebtors")?.selectedOptions || []).map(o => o.value);
 
       if (!title) return alert("Please input a title.");
-      if (!dateStr) return alert("Please choose a date.");
+      const date = rhit._parseInputDate(dateStr);
+      if (!date) return alert("Please choose a valid date.");
       const cents = rhit._parseAmountToCents(amountStr);
-      if (cents <= 0) return alert("Amount must be > 0.");
+      if (cents <= 0) return alert("Enter a positive amount with at most 2 decimal places, within the supported range.");
       if (debtorUids.length === 0) return alert("Please select at least one debtor.");
 
-      let shares = {};
-      if (splitType === "percent") {
-		const entries = Array.from(document.querySelectorAll(".percent-input"));
-		const sumPercent = entries.reduce((s, e) => s + Number(e.value || 0), 0);
-		if (sumPercent <= 0 || sumPercent > 100) {
-			return alert("Percent must be > 0 and ≤ 100. (未分配的部分默认由 Payer 承担)");
-		}
-		shares = {};
-		for (const e of entries) {
-			const uid = e.dataset.uid;
-			const pct = Number(e.value || 0) / 100;   
-			shares[uid] = Math.round(cents * pct);   
-		}
-	 } else {
-        const n = debtorUids.length; const base = Math.floor(cents / n);
-        let allocated = 0; debtorUids.forEach(uid => { shares[uid] = base; allocated += base; });
-        let rem = cents - allocated; for (let i = 0; i < debtorUids.length && rem > 0; i++, rem--) shares[debtorUids[i]] += 1;
-      }
+      const entries = Array.from(document.querySelectorAll(".percent-input"));
+      const shares = rhit._splitAmount(cents, debtorUids, splitType, entries);
 
       const paid = {}; debtorUids.forEach(uid => paid[uid] = false);
 
       await firebase.firestore().collection(rhit.FB_COLLECTION_BILLS).add({
         title,
-        date: firebase.firestore.Timestamp.fromDate(new Date(dateStr)),
+        date: firebase.firestore.Timestamp.fromDate(date),
         amountCents: cents,
         payerUid: rhit.fbAuthManager.uid,
         debtors: debtorUids,
@@ -511,7 +514,7 @@ rhit.DetailPageController = class {
     document.querySelector("#inputTitle").value = b.title || "";
     document.querySelector("#inputDate").value = rhit._toInputDate(b.date);
     document.querySelector("#inputPayer").value = rhit.fbUsersManager.getDisplay(b.payerUid);
-    document.querySelector("#inputAmount").value = (b.amountCents / 100).toFixed(2);
+    document.querySelector("#inputAmount").value = rhit._amountText(b.amountCents);
     document.querySelector("#selectSplitType").value = b.splitType || "equal";
 
     const sel = document.querySelector("#selectDebtors"); 
@@ -605,6 +608,9 @@ rhit.DetailPageController = class {
     const wrapper = document.querySelector("#percentList");
     const rows = document.querySelector("#percentRows");
     if (!wrapper || !rows) return;
+    const previous = this._percentDraft || (this._percentDraft = new Map());
+    document.querySelectorAll(".percent-input").forEach(e => previous.set(e.dataset.uid, e.value));
+    if (!this._editMode) previous.clear();
 
     const sel = document.querySelector("#selectDebtors");
     const chosen = Array.from(sel.selectedOptions).map(o => o.value);
@@ -616,18 +622,19 @@ rhit.DetailPageController = class {
 
     const bill = (existingBill || rhit.fbSingleBillManager);
     const shares = bill.shares || {};
-    const total = bill.amountCents || rhit._parseAmountToCents(document.querySelector("#inputAmount").value);
+    const total = bill.amountCents;
 
     chosen.forEach(uid => {
       const name = rhit.fbUsersManager.getDisplay(uid);
       let pct = "";
-      if (total > 0 && shares[uid] >= 0) pct = Math.round((shares[uid] / total) * 100);
+      if (total > 0 && shares[uid] >= 0) pct = rhit._sharePercent(shares[uid], total);
       const div = document.createElement("div"); 
       div.className = "form-group";
       div.innerHTML = `
         <label class="bmd-label-floating">${name}</label>
-        <input type="number" min="0" max="100" step="1" class="form-control percent-input" data-uid="${uid}" value="${pct}">
+        <input type="number" min="0" max="100" step="0.01" class="form-control percent-input" data-uid="${uid}">
       `;
+      div.querySelector("input").value = previous.get(uid) ?? pct;
       rows.appendChild(div);
     });
   }
@@ -641,37 +648,38 @@ rhit.DetailPageController = class {
       const debtorUids = Array.from(document.querySelector("#selectDebtors").selectedOptions).map(o => o.value);
 
       if (!title) return alert("Title required.");
-      if (!dateStr) return alert("Date required.");
-      if (amountCents <= 0) return alert("Amount must be > 0.");
+      const date = rhit._parseInputDate(dateStr);
+      if (!date) return alert("Please choose a valid date.");
+      if (amountCents <= 0) return alert("Enter a positive amount with at most 2 decimal places, within the supported range.");
       if (debtorUids.length === 0) return alert("Select at least one debtor.");
 
-      let shares = {};
-      if (splitType === "percent") {
-        const entries = Array.from(document.querySelectorAll(".percent-input"));
-        const sumPercent = entries.reduce((s, e) => s + Number(e.value || 0), 0);
-        if (sumPercent <= 0 || sumPercent > 100) {
-          return alert("Percent must be > 0 and ≤ 100. (未分配部分默认由 Payer 承担)");
-        }
-        for (const e of entries) {
-          const uid = e.dataset.uid;
-          const pct = Number(e.value || 0) / 100;
-          shares[uid] = Math.round(amountCents * pct);
-        }
-      } else {
-        const n = debtorUids.length; 
-        const base = Math.floor(amountCents / n);
-        let allocated = 0; 
-        debtorUids.forEach(uid => { shares[uid] = base; allocated += base; });
-        let rem = amountCents - allocated; 
-        for (let i = 0; i < debtorUids.length && rem > 0; i++, rem--) shares[debtorUids[i]] += 1;
-      }
+      const entries = Array.from(document.querySelectorAll(".percent-input"));
+      const bill = rhit.fbSingleBillManager;
+      // Displayed percentages are an approximation of stored cents. A title,
+      // date or repayment edit must not recalculate those original amounts.
+      const sameSplit = amountCents === bill.amountCents && splitType === bill.splitType
+        && debtorUids.length === bill.debtors.length
+        && new Set(debtorUids).size === debtorUids.length
+        && debtorUids.every(uid => bill.debtors.includes(uid));
+      const samePercents = splitType !== "percent" || (entries.length === debtorUids.length
+        && new Set(entries.map(e => e.dataset.uid)).size === debtorUids.length
+        && entries.every(e => debtorUids.includes(e.dataset.uid)
+          && rhit._parseHundredths(e.value) !== null
+          && rhit._parseHundredths(e.value) === rhit._parseHundredths(rhit._sharePercent(bill.shares[e.dataset.uid], amountCents))));
+      const storedShares = debtorUids.map(uid => bill.shares[uid]);
+      const validStoredShares = Object.keys(bill.shares).length === debtorUids.length
+        && storedShares.every(n => Number.isSafeInteger(n) && n >= 0)
+        && storedShares.reduce((sum, n) => sum + n, 0) <= amountCents;
+      const shares = sameSplit && samePercents && validStoredShares
+        ? { ...bill.shares }
+        : rhit._splitAmount(amountCents, debtorUids, splitType, entries);
 
       const newPaid = {};
       debtorUids.forEach(uid => newPaid[uid] = !!this._paidEditable[uid]);
 
       await rhit.fbSingleBillManager.updateBill({
         title,
-        date: firebase.firestore.Timestamp.fromDate(new Date(dateStr)),
+        date: firebase.firestore.Timestamp.fromDate(date),
         amountCents,
         splitType,
         debtors: debtorUids,
@@ -765,7 +773,8 @@ rhit.UnpaidPageController = class {
 
 rhit.checkForRedirects = function () {
   if (document.querySelector("#loginPage") && rhit.fbAuthManager.isSignedIn) {
-    window.location.href = "/home.html";
+    const next = new URLSearchParams(window.location.search || "").get("next") || "";
+    window.location.href = /^\/app\.html(?:[?#]|$)/.test(next) ? next : "/app.html";
   }
   if (!document.querySelector("#loginPage") && !rhit.fbAuthManager.isSignedIn) {
     window.location.href = "/";
@@ -781,9 +790,62 @@ rhit.initializePage = function () {
   if (document.querySelector("#unpaidPage")) new rhit.UnpaidPageController();
 };
 
-rhit._parseAmountToCents = s => { const n = Number(s); if (!isFinite(n)) return 0; return Math.round(n * 100); };
-rhit._fmtMoney = cents => `$${(Number(cents || 0) / 100).toFixed(2)}`;
-rhit._toInputDate = d => { const p = n => n.toString().padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+// Parse decimal text without floating-point multiplication or silent rounding.
+rhit._parseHundredths = value => {
+  const text = String(value ?? "").trim();
+  if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null;
+  const [whole, fraction = ""] = text.split(".");
+  const units = BigInt(whole || "0") * 100n + BigInt(fraction.padEnd(2, "0"));
+  return units <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(units) : null;
+};
+rhit._parseAmountToCents = s => rhit._parseHundredths(s) ?? 0;
+rhit._sharePercent = (share, total) => ((share / total) * 100).toFixed(2);
+
+rhit._splitAmount = (amountCents, debtorUids, splitType, entries) => {
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new Error("Invalid amount.");
+  if (debtorUids.length === 0 || new Set(debtorUids).size !== debtorUids.length) {
+    throw new Error("Select distinct debtors.");
+  }
+  if (splitType === "equal") {
+    const base = Math.floor(amountCents / debtorUids.length);
+    const remainder = amountCents % debtorUids.length;
+    return Object.fromEntries(debtorUids.map((uid, i) => [uid, base + (i < remainder ? 1 : 0)]));
+  }
+  if (splitType !== "percent") throw new Error("Choose a valid split type.");
+  const percents = new Map(entries.map(e => [e.dataset.uid, rhit._parseHundredths(e.value)]));
+  if (entries.length !== debtorUids.length || percents.size !== debtorUids.length
+    || debtorUids.some(uid => !percents.has(uid) || percents.get(uid) === null || percents.get(uid) > 10000)) {
+    throw new Error("Enter a percentage from 0 to 100 for each debtor, with at most 2 decimal places.");
+  }
+  const totalPercent = Array.from(percents.values()).reduce((sum, p) => sum + p, 0);
+  if (totalPercent <= 0 || totalPercent > 10000) {
+    throw new Error("Percentages must total more than 0 and at most 100. The payer covers the remainder.");
+  }
+  // Round the assigned total once, then distribute its remaining cents by
+  // fractional remainder. Ties follow participant order, including equal splits.
+  const parts = debtorUids.map((uid, index) => {
+    const numerator = BigInt(amountCents) * BigInt(percents.get(uid));
+    return { uid, index, cents: Number(numerator / 10000n), remainder: Number(numerator % 10000n) };
+  });
+  const target = Number((BigInt(amountCents) * BigInt(totalPercent) + 5000n) / 10000n);
+  const extra = target - parts.reduce((sum, p) => sum + p.cents, 0);
+  const ranked = [...parts].sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (let i = 0; i < extra; i++) ranked[i].cents++;
+  return Object.fromEntries(parts.map(p => [p.uid, p.cents]));
+};
+
+rhit._amountText = cents => {
+  const amount = Math.abs(cents);
+  return `${cents < 0 ? "-" : ""}${Math.floor(amount / 100)}.${String(amount % 100).padStart(2, "0")}`;
+};
+rhit._fmtMoney = cents => `$${rhit._amountText(Number(cents || 0))}`;
+// Bill dates are calendar dates stored at UTC midnight, including older bills.
+rhit._toInputDate = d => d.toISOString().slice(0, 10);
+rhit._parseInputDate = value => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "") || value.startsWith("0000-")) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && rhit._toInputDate(date) === value ? date : null;
+};
 
 rhit.main = function () {
   rhit.fbAuthManager = new rhit.FbAuthManager();

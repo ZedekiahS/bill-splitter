@@ -1,70 +1,113 @@
-# Firestore permission tests
+# Bill Splitter tests
 
-These tests exercise the real Firestore emulator with Node's built-in test runner.
-No npm dependencies or live Firebase credentials are required. Install Node 20+
-and the Java version required by your Firebase CLI before running them.
+Run commands from the repository directory with Node 20+. Calculation suites use
+the shipped application modules with lightweight stubs or isolated storage; no
+login, npm test dependencies, emulator, or network is needed.
 
-From the `Project` directory, run:
+## Calculation and storage suites
+
+```powershell
+node tests/bill-calculations.test.mjs
+node tests/ledger-core.test.mjs
+```
+
+| Suite | Cases | Coverage |
+| --- | ---: | --- |
+| `bill-calculations.test.mjs` | 65 | Original create/edit handlers, exact cents, percentage rounding, draft preservation, UTC grouping/filtering and daylight-saving boundaries |
+| `ledger-core.test.mjs` | 36 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
+
+The original bill flow divides among selected debtors, excluding the payer. The
+new shared-ledger flow explicitly selects participants and allows the payer to
+share the expense. Both accept monetary inputs with at most two decimal places.
+Percentage totals must be greater than 0 and at most 100; largest remainders
+allocate rounding cents, with participant order breaking ties. The payer covers
+the unassigned portion. Original metadata-only edits preserve stored shares.
+
+Original bill dates use UTC-midnight timestamps. New ledger dates use validated
+`YYYY-MM-DD` strings, checked as UTC calendar days to avoid timezone shifts.
+These suites establish client behavior, not production permissions.
+
+## Firestore emulator suites
+
+Install Firebase CLI and a compatible Java runtime. The local test configuration
+binds Firestore to `127.0.0.1:8280`. Run the suites separately:
 
 ```powershell
 firebase emulators:exec --only firestore --project demo-bill-splitter-permissions --config firebase.test.json "node tests/firestore-rules.test.mjs"
+firebase emulators:exec --only firestore --project demo-bill-splitter-ledgers --config firebase.test.json "node tests/ledger-rules.test.mjs"
 ```
 
-On this Windows workstation, the default `java` is Java 8, while JDK 23 is already
-installed. Select it for the current terminal before using the CLI command:
+The CLI supplies `FIRESTORE_EMULATOR_HOST` to each test process. When attaching to
+an already running emulator, explicitly use its port:
+
+```powershell
+$env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8281'
+node tests/ledger-rules.test.mjs
+node tests/firestore-rules.test.mjs
+```
+
+Without that environment variable, the legacy suite defaults to port **8280** and
+the shared-ledger suite defaults to **8281**. Their project IDs are fixed in the
+tests regardless of the shell's Firebase project selection.
+
+On this workstation, JDK 23 can be selected if the terminal still resolves Java 8:
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Java\jdk-23'
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
-If a Firestore emulator is already running locally:
+| Suite | Cases | Fixed emulator project |
+| --- | ---: | --- |
+| `firestore-rules.test.mjs` | 32 | `demo-bill-splitter-permissions` |
+| `ledger-rules.test.mjs` | 31 | `demo-bill-splitter-ledgers` |
 
-```powershell
-$env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8280'
-node tests/firestore-rules.test.mjs
-```
+Each suite loads the repository's `firestore.rules`, clears only its fixed
+emulator project's data, and seeds synthetic fixtures. Non-loopback addresses
+are rejected. Do not run concurrent copies against the same project. Fixture
+seeding uses an emulator-only administrative token; access assertions use test
+user tokens or no token. Production credentials and data are not used.
 
-The suite loads `firestore.rules` and clears **only the emulator database for
-`demo-bill-splitter-permissions`** before seeding synthetic fixtures. It rejects
-non-loopback emulator addresses. Test accounts and bills never use the production
-project. Do not run concurrent suites against the same demo project.
+## Permission boundaries
 
-The fixture seeding token `owner` and unsigned test-user tokens are supported by
-the Firebase emulator only. Actual access assertions use the test-user tokens or
-no token; they do not use the administrative fixture token.
+| Resource | Access and writes |
+| --- | --- |
+| `users/{uid}` | Signed-in directory reads; only the profile owner can write known fields |
+| `bills/{id}` | Original payer or listed debtor can read; only the original payer can update and confirm repayment |
+| `ledgers/{id}` | Non-anonymous authenticated members can read; owner creates and grants membership through atomic invitation approval |
+| Ledger `members` | Ledger members can read; owner adds temporary identities and approves account binding |
+| Ledger `expenses` | Ledger members can read; owner can record for any member, other bound members only as themselves |
+| Ledger `payments` | Ledger members can read; recipient or owner confirms/reverses with matching expense balance updates |
+| `invites/{token}` and `claims` | Limited invitation preview for an authenticated token holder while open; claimants submit only their own identity; owner approves |
 
-## Current permission model
+Deletes and unspecified collection access are denied. Shared expenses require
+1–8 distinct participants from the same ledger, integer nonnegative shares whose
+sum does not exceed the positive expense amount, and a valid ledger payer. Eight
+participants keep rule document lookups within Firestore's per-operation limit,
+including a payer who is not sharing the cost; ledger member count is unrestricted.
 
-| Resource | Read | Create or update | Delete |
-| --- | --- | --- | --- |
-| `users/{uid}` | Signed-in users | Only that uid, with the known profile fields | Denied |
-| `bills/{id}` | Original payer or a listed debtor | Create as oneself; update only as the original payer | Denied |
-| Other collections and all subcollections | Denied | Denied | Denied |
+Repayment journal entries and aggregate balances must change atomically. Tests
+cover forged or reused entries, overpayment, competing receipts, duplicate
+reversal, immutable expense fields, and incomplete identity approval. Approval
+must update the invitation, claim, member binding, and ledger membership together.
+Display names alone never grant ledger access.
 
-The original payer also confirms repayments, matching the existing UI. Updates
-cannot change `payerUid`, `createdAt`, or `status`, or add unknown fields.
-Creation and update timestamps use server timestamps. Writes check required
-fields and basic types, unique participants, matching `shares` / `paid` keys,
-and boolean payment flags.
+Legacy rules retain their existing directory visibility: signed-in users can read
+profile email and phone fields. They validate bill schema and ownership, but do
+not enforce the complete split arithmetic. Shared-ledger rules enforce share
+bounds and sums; calculation policy and full calendar-date validity remain client
+checks (rules validate the date string shape).
 
-The signed-in user directory intentionally preserves the existing participant
-picker and reminders: profile fields, including email and phone number, remain
-readable by other signed-in users. This change does not make contacts private to
-bill members. That would require a separate directory/contact data model and UI
-change.
+The cloud adapter has not been exercised here with live accounts. Existing
+production documents have not been migrated. Tests and local preview **do not
+deploy rules**; the new shared-ledger rules remain undeployed.
 
-Rules do not enforce the full split-amount arithmetic in this change. Amount
-rounding and date conversion fixes remain separate work. Existing production
-documents and deployed rules have not been inspected or migrated; older documents
-outside the current application's schema may need correction before editing.
+## Browser review
 
-Running these tests or the local preview does **not** deploy the rules. Production
-keeps its current rules until an explicit rules deployment.
-
-References:
-
-- [Firebase rule conditions and query behavior](https://firebase.google.com/docs/firestore/security/rules-conditions)
-- [Firebase field validation](https://firebase.google.com/docs/firestore/security/rules-fields)
-- [Testing with the Firestore emulator](https://firebase.google.com/docs/firestore/security/test-rules-emulator)
-- [Firebase SDK emulator test-token format](https://github.com/firebase/firebase-js-sdk/blob/main/packages/util/src/emulator.ts)
+Start `node scripts/preview.mjs` and open
+`http://127.0.0.1:2801/app.html?demo=1`. Review desktop and narrow mobile layouts,
+expense entry, ledger/member creation, invitation claim/approval, partial receipt
+and reversal, and statement copy/download. Demo changes stay in this browser's
+local storage. Use a different preview port for disposable review data so that
+the main demo remains clean. Browser checks complement the suites; they do not
+constitute a live cloud rollout.
