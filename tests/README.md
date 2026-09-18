@@ -9,12 +9,14 @@ login, npm test dependencies, emulator, or network is needed.
 ```powershell
 node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
+node tests/i18n.test.mjs
 ```
 
 | Suite | Cases | Coverage |
 | --- | ---: | --- |
 | `bill-calculations.test.mjs` | 65 | Original create/edit handlers, exact cents, percentage rounding, draft preservation, UTC grouping/filtering and daylight-saving boundaries |
 | `ledger-core.test.mjs` | 36 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
+| `i18n.test.mjs` | 6 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to

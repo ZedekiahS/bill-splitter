@@ -50,9 +50,16 @@ visible keyboard focus, a skip link, named icon buttons, reduced-motion support,
 and inline form errors form the accessibility baseline. Receipt confirmation and
 reversal use explicit language; color is not the only status indicator.
 
-The demo is visibly labeled and has no real account writes. Cloud members have
+The local demo has no real account writes; preview details belong in the review
+conversation and documentation, not extra interface notices. Cloud members have
 distinct temporary, pending claim, and bound-account states. The account menu
 keeps original independent bills available without implying a migration.
+
+The shared-ledger and sign-in screens offer Chinese and English from a compact
+language selector. The choice persists on this browser. Translate interface copy,
+validation, and exported statement labels; preserve entered names, titles, notes,
+currencies, amounts, and dates. The favicon uses the same forest-green b. mark as
+the product, including the legacy pages.
 
 ## Financial presentation
 

@@ -1,28 +1,30 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=bill-splitter-1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=bill-splitter-1">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#24594d">
   <meta name="color-scheme" content="light">
-  <title>Bill Splitter · 共同账本</title>
+  <title data-i18n="Bill Splitter · 共同账本">Bill Splitter · 共同账本</title>
   <link rel="stylesheet" href="styles/app.css">
 </head>
 <body>
-  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <a class="skip-link" href="#main-content" data-i18n="跳到主要内容">跳到主要内容</a>
   <div id="app" class="app-shell">
-    <aside class="sidebar" aria-label="主导航">
-      <a class="brand" href="app.html"><span class="brand-mark" aria-hidden="true">b.</span><span>Bill Splitter<small>一起记，轻松分。</small></span></a>
+    <aside class="sidebar" aria-label="主导航" data-i18n-aria-label="主导航">
+      <a class="brand" href="app.html"><span class="brand-mark" aria-hidden="true">b.</span><span>Bill Splitter<small data-i18n="一起记，轻松分。">一起记，轻松分。</small></span></a>
       <nav class="primary-nav" id="primary-nav"></nav>
-      <div class="sidebar-ledgers"><div class="section-label"><span>我的账本</span><button class="icon-button" data-action="new-ledger" aria-label="新建账本">＋</button></div><div id="ledger-nav"></div></div>
-      <div class="sidebar-foot"><span class="avatar avatar-self">Z</span><div><strong id="account-name">正在加载</strong></div><button class="text-link" data-action="account" aria-label="登录与账号">账号</button></div>
+      <div class="sidebar-ledgers"><div class="section-label"><span data-i18n="我的账本">我的账本</span><button class="icon-button" data-action="new-ledger" aria-label="新建账本" data-i18n-aria-label="新建账本">＋</button></div><div id="ledger-nav"></div></div>
+      <div class="sidebar-foot"><span class="avatar avatar-self">Z</span><div><strong id="account-name">正在加载</strong></div><button class="text-link" data-action="account" aria-label="登录与账号" data-i18n="账号" data-i18n-aria-label="登录与账号">账号</button></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div class="scope-control"><span class="scope-label">当前账本</span><label class="sr-only" for="ledger-picker">选择账本</label><select id="ledger-picker" aria-label="选择账本"></select></div><div class="topbar-actions"><button class="icon-button" data-action="refresh" aria-label="刷新账本" title="刷新账本"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div></header>
-      <main id="main-content" class="main-content" tabindex="-1"><div class="loading-state" role="status">正在打开你的账本…</div></main>
-      <footer class="workspace-footer"><span>把账记清，把时间留给生活。</span></footer>
+      <header class="topbar"><div class="scope-control"><span class="scope-label" data-i18n="当前账本">当前账本</span><label class="sr-only" for="ledger-picker" data-i18n="选择账本">选择账本</label><select id="ledger-picker" aria-label="选择账本" data-i18n-aria-label="选择账本"></select></div><div class="topbar-actions"><select id="language-picker" class="language-picker" aria-label="Language / 语言"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select><button class="icon-button" data-action="refresh" aria-label="刷新账本" title="刷新账本" data-i18n-aria-label="刷新账本" data-i18n-title="刷新账本"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div></header>
+      <main id="main-content" class="main-content" tabindex="-1"><div class="loading-state" role="status" data-i18n="正在打开你的账本…">正在打开你的账本…</div></main>
+      <footer class="workspace-footer"><span data-i18n="把账记清，把时间留给生活。">把账记清，把时间留给生活。</span></footer>
     </div>
-    <nav class="mobile-nav" id="mobile-nav" aria-label="移动导航"></nav>
+    <nav class="mobile-nav" id="mobile-nav" aria-label="移动导航" data-i18n-aria-label="移动导航"></nav>
   </div>
   <dialog id="action-dialog" aria-labelledby="dialog-title"><div class="dialog-inner" id="dialog-content"></div></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

@@ -83,6 +83,9 @@ small { font-size: 13px; }
 .scope-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 #ledger-picker { max-width: 290px; min-height: 44px; border: 0; border-radius: 6px; padding: 8px 28px 8px 0; color: var(--ink); background: transparent; font-size: 14px; font-weight: 600; cursor: pointer; }
 .topbar-actions { display: flex; align-items: center; gap: 16px; }
+.language-picker { min-height: 44px; max-width: 105px; padding: 8px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; }
+.language-picker:hover { color: var(--primary); background: var(--surface-subtle); }
+.topbar-actions { flex: 0 0 auto; }
 .icon-button { display: inline-grid; place-items: center; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--muted); transition: background 150ms ease-out, color 150ms ease-out; }
 .icon-button:hover { background: var(--surface-subtle); color: var(--primary); }
 .main-content { width: 100%; max-width: 1420px; margin: 0 auto; padding: 40px 40px 28px; flex: 1; }
@@ -254,7 +257,7 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); }
 .split-summary[data-state="success"] { color: var(--primary); }
 .split-summary[data-state="error"] { color: var(--danger); }
 @media (max-width: 600px) {
-  .percent-field { grid-template-columns: minmax(0, 1fr) 88px minmax(76px, 1fr); gap: 8px; }
+  .percent-field { grid-template-columns: minmax(0, 1fr) 112px minmax(76px, 1fr); gap: 8px; }
   .amount-field { grid-template-columns: minmax(0, 1fr) 144px; }
 }
 .detail-amount { margin: 4px 0 8px; font-size: 39px; line-height: 1.4; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
@@ -280,6 +283,7 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); }
 .login-aside p { max-width: 34em; color: #52614d; font-size: 16px; line-height: 1.9; }
 .login-aside > :last-child { margin-top: auto; padding-top: 65px; }
 .login-panel { display: flex; flex-direction: column; justify-content: center; width: 100%; max-width: 440px; padding: 35px; margin: auto; }
+.login-language { display: flex; justify-content: flex-end; width: 100%; margin-bottom: 24px; }
 .login-panel h2 { margin-bottom: 9px; font-size: 27px; }
 .login-panel > p { margin-bottom: 28px; color: var(--muted); font-size: 14px; line-height: 1.8; }
 .login-form { width: 100%; }
@@ -342,7 +346,7 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); }
   .topbar { padding-inline: 20px; gap: 10px; }
   .scope-control { flex-direction: column; align-items: flex-start; gap: 0; flex: 1; }
   .scope-label { font-size: 10px; }
-  #ledger-picker { max-width: 100%; min-height: 44px; padding-block: 2px; font-size: 13px; }
+  #ledger-picker { width: 100%; max-width: 100%; min-height: 44px; padding-block: 2px; font-size: 13px; text-overflow: ellipsis; }
   .topbar-actions { gap: 2px; }
   .topbar-actions .icon-button { width: 44px; flex-basis: 44px; }
   .main-content { padding: 27px 18px 18px; }
@@ -446,7 +450,7 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); }
 @media (max-width: 360px) {
   .main-content { padding-inline: 14px; }
   .topbar { padding-inline: 15px; }
-  #ledger-picker { max-width: 186px; }
+  #ledger-picker { max-width: 100%; }
   .page-heading h1 { font-size: 24px; }
   .balance-strip { padding-inline: 16px; }
   .balance-block + .balance-block { padding-left: 15px; }

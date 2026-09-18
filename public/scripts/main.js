@@ -167,20 +167,26 @@ rhit.LoginPageController = class {
     if (roseBtn) roseBtn.addEventListener("click", () => rhit.fbAuthManager.signIn());
 
     const loginBtn = document.querySelector("#loginButton");
+    const translate = message => window.billSplitterLogin?.t(message) || message;
+    const setButtonText = (button, message) => {
+      button.setAttribute("data-i18n", message);
+      button.textContent = translate(message);
+    };
     const showLoginError = message => {
       const error = document.querySelector("#login-error");
-      if (error) { error.textContent = message; error.hidden = false; }
-      else alert(message);
+      const source = typeof message === "string" ? message : window.billSplitterLogin?.authError(message) || "暂时无法完成操作，请稍后再试。";
+      if (error) { error.setAttribute("data-i18n", source); error.textContent = translate(source); error.hidden = false; }
+      else alert(translate(source));
     };
     const emailLogin = async event => {
       event.preventDefault();
       const email = (document.querySelector("#inputEmail")?.value || "").trim();
       const pw = document.querySelector("#inputPassword")?.value || "";
       if (!email || !pw) { showLoginError("请填写邮箱与密码。"); return; }
-      loginBtn.disabled = true; loginBtn.textContent = "正在登录…";
+      loginBtn.disabled = true; setButtonText(loginBtn, "正在登录…");
       try { await firebase.auth().signInWithEmailAndPassword(email, pw); }
-      catch (err) { showLoginError(err.message); }
-      finally { loginBtn.disabled = false; loginBtn.textContent = "登录并继续"; }
+      catch (err) { showLoginError(err); }
+      finally { loginBtn.disabled = false; setButtonText(loginBtn, "登录并继续"); }
     };
     const loginForm = document.querySelector("#emailLoginForm");
     if (loginForm) loginForm.addEventListener("submit", emailLogin);
@@ -191,7 +197,7 @@ rhit.LoginPageController = class {
       const email = (document.querySelector("#inputEmail")?.value || "").trim();
       const pw = document.querySelector("#inputPassword")?.value || "";
       if (!email || !pw) { showLoginError("请填写邮箱与密码，再注册账号。"); return; }
-      firebase.auth().createUserWithEmailAndPassword(email, pw).catch(err => showLoginError(err.message));
+      firebase.auth().createUserWithEmailAndPassword(email, pw).catch(err => showLoginError(err));
     });
   }
 };

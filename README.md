@@ -27,6 +27,8 @@ They demonstrate the claim and approval flow, not cross-device sharing.
 
 - Separate ledgers for groups or activities, each using CNY or USD.
 - Overview, searchable expense list, settlements, and member management.
+- Chinese/English interface and settlement statements, with a remembered language
+  choice shared by the app and sign-in page. Entered ledger data stays unchanged.
 - Equal, percentage, or exact-amount splits with a preview before saving; the payer can also
   participate. Each expense supports up to **8 people sharing the cost**. This
   limit does not restrict the number of members in a ledger.
@@ -76,10 +78,11 @@ or a live-account end-to-end test. The working demo is the review entry point.
 ```powershell
 node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
+node tests/i18n.test.mjs
 ```
 
 The suites contain 65 original calculation regressions and 36 shared-ledger
-calculation/storage tests. Separate emulator suites cover 32 original permission
+calculation/storage tests, plus 6 localization regressions. Separate emulator suites cover 32 original permission
 cases and 31 shared-ledger permission cases. See [tests/README.md](tests/README.md)
 for commands, coverage, and limits. Neither tests nor preview deploy rules or
 modify a live service.

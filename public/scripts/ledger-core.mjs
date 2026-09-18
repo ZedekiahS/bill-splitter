@@ -111,20 +111,24 @@ export function memberBalances({ members, expenses, payments }) {
   return [...result.values()];
 }
 
-export function settlementText(snapshot) {
+export function settlementText(snapshot, locale = 'zh-CN') {
   const { ledger, expenses, members } = snapshot;
   const balances = memberBalances(snapshot);
   const names = new Map(members.map(member => [member.id, member.name]));
-  const lines = [`${ledger.title} · ${ledger.currency}`, "待结算清单（按记账记录计算，不是转账凭证）", ""];
+  const english = locale === 'en';
+  const lines = [`${ledger.title} · ${ledger.currency}`, english ? "Settlement statement (based on ledger entries; not a payment receipt)" : "待结算清单（按记账记录计算，不是转账凭证）", ""];
   for (const expense of expenses.filter(row => row.status === "active")) {
     for (const memberId of Object.keys(expense.shares)) {
       const left = remainingFor(expense, memberId);
-      if (left > 0) lines.push(`${names.get(memberId)} → ${names.get(expense.payerMemberId)}：${formatMoney(left, ledger.currency)}（${expense.title} · ${expense.date}）`);
+      if (left > 0) lines.push(english ? `${names.get(memberId)} → ${names.get(expense.payerMemberId)}: ${formatMoney(left, ledger.currency)} (${expense.title} · ${expense.date})` : `${names.get(memberId)} → ${names.get(expense.payerMemberId)}：${formatMoney(left, ledger.currency)}（${expense.title} · ${expense.date}）`);
     }
   }
-  if (lines.length === 3) lines.push("当前记录没有待确认的还款。");
-  lines.push("", "成员净余额（同一账本、同一币种）");
-  balances.forEach(row => lines.push(`${row.name}：${row.balanceCents > 0 ? "待收 " : row.balanceCents < 0 ? "待付 " : "已平衡 "}${formatMoney(Math.abs(row.balanceCents), ledger.currency)}`));
-  lines.push("", "还款由收款人或账本管理员确认；本应用不代为转账。");
+  if (lines.length === 3) lines.push(english ? "No outstanding repayments in the current records." : "当前记录没有待确认的还款。");
+  lines.push("", english ? "Member net balances (same ledger and currency)" : "成员净余额（同一账本、同一币种）");
+  balances.forEach(row => {
+    const label = english ? (row.balanceCents > 0 ? "To receive " : row.balanceCents < 0 ? "To pay " : "Settled ") : (row.balanceCents > 0 ? "待收 " : row.balanceCents < 0 ? "待付 " : "已平衡 ");
+    lines.push(`${row.name}${english ? ': ' : '：'}${label}${formatMoney(Math.abs(row.balanceCents), ledger.currency)}`);
+  });
+  lines.push("", english ? "Payments are confirmed by the recipient or ledger owner. This app does not transfer money." : "还款由收款人或账本管理员确认；本应用不代为转账。");
   return lines.join("\n");
 }
