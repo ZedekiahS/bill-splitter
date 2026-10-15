@@ -10,13 +10,17 @@ login, npm test dependencies, emulator, or network is needed.
 node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
 node tests/i18n.test.mjs
+node tests/expense-search.test.mjs
 ```
+
+All 117 local tests pass across these four suites.
 
 | Suite | Cases | Coverage |
 | --- | ---: | --- |
 | `bill-calculations.test.mjs` | 65 | Original create/edit handlers, exact cents, percentage rounding, draft preservation, UTC grouping/filtering and daylight-saving boundaries |
-| `ledger-core.test.mjs` | 36 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
+| `ledger-core.test.mjs` | 42 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
 | `i18n.test.mjs` | 6 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
+| `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to
@@ -109,7 +113,9 @@ deploy rules**; the new shared-ledger rules remain undeployed.
 Start `node scripts/preview.mjs` and open
 `http://127.0.0.1:2801/app.html?demo=1`. Review desktop and narrow mobile layouts,
 expense entry, ledger/member creation, invitation claim/approval, partial receipt
-and reversal, and statement copy/download. Demo changes stay in this browser's
+and reversal, and statement copy/download. Check that an empty expense search
+offers a clear-filter action, and that saving an expense or switching ledgers
+clears previous filters. Demo changes stay in this browser's
 local storage. Use a different preview port for disposable review data so that
 the main demo remains clean. Browser checks complement the suites; they do not
 constitute a live cloud rollout.

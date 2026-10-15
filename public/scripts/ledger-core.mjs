@@ -78,6 +78,18 @@ export function remainingFor(expense, memberId) {
   return Math.max(0, (expense.shares[memberId] || 0) - (expense.repaid[memberId] || 0));
 }
 
+export function consumptionShares(expense) {
+  const amount = BigInt(assertCents(expense.amountCents));
+  const shares = new Map(Object.entries(expense.shares).map(([id, cents]) => [id, assertCents(cents, true)]));
+  const allocated = [...shares.values()].reduce((sum, cents) => sum + BigInt(cents), 0n);
+  if (allocated > amount) throw new Error("分摊金额不能超过总额。");
+  const remainder = amount - allocated;
+  if (remainder > 0n) {
+    shares.set(expense.payerMemberId, Number(BigInt(shares.get(expense.payerMemberId) || 0) + remainder));
+  }
+  return Object.fromEntries(shares);
+}
+
 export function memberBalances({ members, expenses, payments }) {
   const result = new Map(members.map(member => [member.id, {
     memberId: member.id, name: member.name, balanceCents: 0, paidCents: 0, shareCents: 0, repaidCents: 0, receivedCents: 0,

@@ -1,4 +1,9 @@
 export default {
+  '没有符合条件的账单': 'No matching expenses',
+  '换个关键词，或清除筛选后再试。': 'Try another search or clear the filters.',
+  '{count}笔账单': '{count} expenses',
+  '清除筛选': 'Clear filters',
+  '已保存，但刷新失败。请刷新账本查看最新记录，无需重复提交。': 'Saved, but the ledger could not refresh. Refresh to see the latest records. No need to submit again.',
   '总览': 'Overview',
   '账单': 'Expenses',
   '结算': 'Settle up',

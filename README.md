@@ -27,6 +27,9 @@ They demonstrate the claim and approval flow, not cross-device sharing.
 
 - Separate ledgers for groups or activities, each using CNY or USD.
 - Overview, searchable expense list, settlements, and member management.
+- Expense search supports Chinese text composition and shows matching results.
+  Empty results offer a clear-filter action; saving an expense or switching
+  ledgers clears previous filters so the relevant entries remain visible.
 - Chinese/English interface and settlement statements, with a remembered language
   choice shared by the app and sign-in page. Entered ledger data stays unchanged.
 - Equal, percentage, or exact-amount splits with a preview before saving; the payer can also
@@ -79,10 +82,12 @@ or a live-account end-to-end test. The working demo is the review entry point.
 node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
 node tests/i18n.test.mjs
+node tests/expense-search.test.mjs
 ```
 
-The suites contain 65 original calculation regressions and 36 shared-ledger
-calculation/storage tests, plus 6 localization regressions. Separate emulator suites cover 32 original permission
+All 117 local tests pass: 65 original calculation regressions, 42 shared-ledger
+calculation/storage tests, 6 localization regressions, and 4 expense-search
+regressions. Separate emulator suites cover 32 original permission
 cases and 31 shared-ledger permission cases. See [tests/README.md](tests/README.md)
 for commands, coverage, and limits. Neither tests nor preview deploy rules or
 modify a live service.

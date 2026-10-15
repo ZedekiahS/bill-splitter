@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  parseMoney, formatMoney, splitShares, remainingFor, memberBalances, settlementText,
+  parseMoney, formatMoney, splitShares, remainingFor, consumptionShares, memberBalances, settlementText,
 } from '../public/scripts/ledger-core.mjs';
 import { createStore } from '../public/scripts/ledger-store.mjs';
 
@@ -175,6 +175,60 @@ test('percent splitting rejects invalid individual values and totals above 100',
 
 test('an explicitly selected payer receives a normal participant share', () => {
   assert.deepEqual(splitShares(6000, ['payer', 'friend'], { type: 'equal' }), { payer: 3000, friend: 3000 });
+});
+
+test('consumption includes the unallocated percentage in a selected payer share without changing storage', () => {
+  const expense = Object.freeze({
+    amountCents: 60000, payerMemberId: 'payer',
+    shares: Object.freeze(splitShares(60000, ['payer', 'friend'], {
+      type: 'percent', percentages: { payer: '20', friend: '30' },
+    })),
+  });
+  assert.deepEqual(consumptionShares(expense), { payer: 42000, friend: 18000 });
+  assert.deepEqual(expense.shares, { payer: 12000, friend: 18000 });
+});
+
+test('consumption adds a payer omitted from participants when the payer covers a remainder', () => {
+  assert.deepEqual(consumptionShares({ amountCents: 10000, payerMemberId: 'payer', shares: { friend: 3000 } }), {
+    friend: 3000, payer: 7000,
+  });
+});
+
+test('fully allocated consumption does not add an unselected payer and keeps explicit zero shares', () => {
+  const expense = { amountCents: 100, payerMemberId: 'payer', shares: { friend: 100, other: 0 } };
+  assert.deepEqual(consumptionShares(expense), { friend: 100, other: 0 });
+  assert.notEqual(consumptionShares(expense), expense.shares);
+});
+
+test('exact-amount consumption preserves all selected shares including a zero payer share', () => {
+  const shares = splitShares(3003, ['payer', 'a', 'b'], {
+    type: 'amount', amounts: { payer: '0', a: '10.01', b: '20.02' },
+  });
+  assert.deepEqual(consumptionShares({ amountCents: 3003, payerMemberId: 'payer', shares }), {
+    payer: 0, a: 1001, b: 2002,
+  });
+});
+
+test('consumption preserves the final cent at the safe-integer limit', () => {
+  const amountCents = Number.MAX_SAFE_INTEGER;
+  assert.deepEqual(consumptionShares({ amountCents, payerMemberId: 'payer', shares: { payer: 1, friend: amountCents - 2 } }), {
+    payer: 2, friend: amountCents - 2,
+  });
+  assert.deepEqual(consumptionShares({ amountCents, payerMemberId: 'payer', shares: { friend: 0 } }), {
+    friend: 0, payer: amountCents,
+  });
+});
+
+test('consumption rejects invalid cents and excess allocation without rounding overflow', () => {
+  const expense = { amountCents: 100, payerMemberId: 'payer', shares: { friend: 100 } };
+  for (const cents of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => consumptionShares({ ...expense, amountCents: cents }));
+    assert.throws(() => consumptionShares({ ...expense, shares: { friend: cents } }));
+  }
+  assert.throws(() => consumptionShares({ ...expense, shares: { friend: 101 } }), /不能超过总额/);
+  assert.throws(() => consumptionShares({
+    amountCents: Number.MAX_SAFE_INTEGER, payerMemberId: 'payer', shares: { payer: Number.MAX_SAFE_INTEGER, friend: 1 },
+  }), /不能超过总额/);
 });
 
 test('remaining balance subtracts recorded repayments for the selected member', () => {
