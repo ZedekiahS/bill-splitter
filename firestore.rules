@@ -91,7 +91,8 @@ service cloud.firestore {
     }
 
     function exactFields(data, fields) {
-      return data.keys().hasAll(fields) && data.keys().hasOnly(fields);
+      let keys = data.keys();
+      return keys.hasAll(fields) && keys.hasOnly(fields);
     }
 
     function accountSignedIn() {
@@ -143,30 +144,121 @@ service cloud.firestore {
       return date is string && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     }
 
-    function validShareAt(ledgerId, data, ids, index) {
-      return ids.size() <= index || (data.shares[ids[index]] is int
-        && data.shares[ids[index]] >= 0
-        && data.shares[ids[index]] <= data.amountCents
-        && get(memberPath(ledgerId, ids[index])).data.name is string);
+    function validMemberAt(ledgerId, ids, index) {
+      return ids.size() <= index || exists(memberPath(ledgerId, ids[index]));
     }
-
-    function shareAt(data, ids, index) {
-      return ids.size() > index ? data.shares[ids[index]] : 0;
-    }
-
-    // Rules cannot iterate arbitrary maps. Eight participants leave room for
-    // the ledger and a separate payer within the ten-document access limit.
-    // This bounds each expense, not the number of members in a ledger.
-    function validExpenseShares(ledgerId, data) {
+    function validExpenseShares(ledgerId, data, checkMembers) {
       let ids = data.shares.keys();
+      let amounts = data.shares.values().concat([0,0,0,0,0,0,0,0]);
       return ids.size() > 0 && ids.size() <= 8
-        && validShareAt(ledgerId, data, ids, 0) && validShareAt(ledgerId, data, ids, 1)
-        && validShareAt(ledgerId, data, ids, 2) && validShareAt(ledgerId, data, ids, 3)
-        && validShareAt(ledgerId, data, ids, 4) && validShareAt(ledgerId, data, ids, 5)
-        && validShareAt(ledgerId, data, ids, 6) && validShareAt(ledgerId, data, ids, 7)
-        && shareAt(data, ids, 0) + shareAt(data, ids, 1) + shareAt(data, ids, 2)
-          + shareAt(data, ids, 3) + shareAt(data, ids, 4) + shareAt(data, ids, 5)
-          + shareAt(data, ids, 6) + shareAt(data, ids, 7) <= data.amountCents;
+        && amounts[0] is int && amounts[0] >= 0
+        && amounts[1] is int && amounts[1] >= 0
+        && amounts[2] is int && amounts[2] >= 0
+        && amounts[3] is int && amounts[3] >= 0
+        && amounts[4] is int && amounts[4] >= 0
+        && amounts[5] is int && amounts[5] >= 0
+        && amounts[6] is int && amounts[6] >= 0
+        && amounts[7] is int && amounts[7] >= 0
+        && amounts[0] + amounts[1] + amounts[2] + amounts[3] + amounts[4] + amounts[5] + amounts[6] + amounts[7] <= data.amountCents
+        && (!checkMembers || (validMemberAt(ledgerId, ids, 0) && validMemberAt(ledgerId, ids, 1) && validMemberAt(ledgerId, ids, 2) && validMemberAt(ledgerId, ids, 3) && validMemberAt(ledgerId, ids, 4) && validMemberAt(ledgerId, ids, 5) && validMemberAt(ledgerId, ids, 6) && validMemberAt(ledgerId, ids, 7)));
+    }
+
+    function templatePath(ledgerId, templateId) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId)/templates/$(templateId);
+    }
+    function occurrencePath(ledgerId, key) {
+      return /databases/$(database)/documents/ledgers/$(ledgerId)/occurrences/$(key);
+    }
+    function templateManager(ledgerId, template) {
+      return ledgerMember(ledgerId) && (ledgerOwner(ledgerId) || template.createdByUid == request.auth.uid);
+    }
+    function monthDays(y, m) {
+      return m == 2 ? (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) ? 29 : 28)
+        : (m in [4, 6, 9, 11] ? 30 : 31);
+    }
+    function validScheduleDate(template, date) {
+      let p = date.split('-');
+      let a = template.startDate.split('-');
+      let y = int(p[0]); let m = int(p[1]); let d = int(p[2]);
+      let sy = int(a[0]); let sm = int(a[1]); let sd = int(a[2]);
+      let when = timestamp.date(y, m, d);
+      let start = timestamp.date(sy, sm, sd);
+      return template.status == 'active' && calendarDate(date) && calendarDate(template.startDate)
+        && y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= monthDays(y, m)
+        && sy > 0 && sm >= 1 && sm <= 12 && sd >= 1 && sd <= monthDays(sy, sm)
+        && when >= start && when <= request.time + duration.value(14, 'h')
+        && ((template.frequency == 'weekly' && (when.toMillis() - start.toMillis()) % 604800000 == 0)
+          || (template.frequency == 'monthly' && d == (sd <= monthDays(y,m) ? sd : monthDays(y,m)))
+          || (template.frequency == 'yearly' && m == sm && d == (sd <= monthDays(y,m) ? sd : monthDays(y,m))));
+    }
+    function validItem(item, ids) {
+      let title = item.title;
+      let amount = item.amountCents;
+      let members = item.memberIds;
+      let size = members.size();
+      return item.keys().hasOnly(['title', 'amountCents', 'memberIds'])
+        && title is string && title.size() > 0 && title.size() <= 120
+        && amount is int && amount > 0 && amount <= 9007199254740991 && members is list && size > 0 && size <= 8
+        && members.toSet().size() == size && ids.hasAll(members);
+    }
+    function validItems(data, expense) {
+      let items = data.items;
+      let count = items.size();
+      let ids = expense.shares.keys();
+      let padded = items.concat([{'amountCents':0},{'amountCents':0},{'amountCents':0},{'amountCents':0},{'amountCents':0},{'amountCents':0},{'amountCents':0},{'amountCents':0}]);
+      return items is list && count <= 8 && (count == 0 || (
+        (count <= 0 || validItem(items[0], ids)) && (count <= 1 || validItem(items[1], ids)) && (count <= 2 || validItem(items[2], ids)) && (count <= 3 || validItem(items[3], ids)) && (count <= 4 || validItem(items[4], ids)) && (count <= 5 || validItem(items[5], ids)) && (count <= 6 || validItem(items[6], ids)) && (count <= 7 || validItem(items[7], ids))
+        && padded[0].amountCents + padded[1].amountCents + padded[2].amountCents + padded[3].amountCents + padded[4].amountCents + padded[5].amountCents + padded[6].amountCents + padded[7].amountCents == expense.amountCents));
+    }
+    function validReceipt(file) {
+      let name = file.name;
+      let type = file.type;
+      let size = file.size;
+      let url = file.dataUrl;
+      return file.keys().hasOnly(['name', 'type', 'size', 'dataUrl'])
+        && name is string && name.size() > 0 && name.size() <= 120
+        && type in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+        && size is int && size > 0 && size <= 204800
+        && url is string && url.size() <= 273100
+        && url.matches('^data:' + type + ';base64,[A-Za-z0-9+/]+={0,2}$');
+    }
+    function validReceiptAt(files, index) { return files.size() <= index || validReceipt(files[index]); }
+    function validExtras(data, expense) {
+      return exactFields(data, ['note', 'items']) && data.note is string && data.note.size() <= 1000
+        && validItems(data, expense);
+    }
+    function validReceipts(data) {
+      let files = data.files;
+      return exactFields(data, ['files']) && files is list && files.size() <= 3
+        && validReceiptAt(files,0) && validReceiptAt(files,1) && validReceiptAt(files,2);
+    }
+    function recurringExpense(ledgerId, expenseId, data) {
+      let template = get(templatePath(ledgerId, data.sourceTemplateId)).data;
+      let occurrence = getAfter(occurrencePath(ledgerId, data.sourceTemplateId + '_' + data.sourceDate)).data;
+      return (ledgerOwner(ledgerId) || template.createdByUid == request.auth.uid)
+        && data.payerMemberId == template.payerMemberId
+        && template.shares.keys().hasAll(data.shares.keys())
+        && validExpenseShares(ledgerId, data, false)
+        && occurrence.status == 'posted' && occurrence.expenseId == expenseId
+        && occurrence.templateId == data.sourceTemplateId && occurrence.date == data.sourceDate
+        && occurrence.createdByUid == request.auth.uid && occurrence.createdAt == request.time;
+    }
+    function validExpenseSource(ledgerId, expenseId, data) {
+      return data.get('sourceTemplateId', null) == null
+        ? data.get('sourceDate', null) == null && validExpenseShares(ledgerId, data, true)
+        : data.sourceTemplateId is string && data.get('sourceDate', null) is string && recurringExpense(ledgerId, expenseId, data);
+    }
+    function validTemplate(ledgerId, data) {
+      return exactFields(data, ['title', 'amountCents', 'payerMemberId', 'shares',
+          'frequency', 'startDate', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 120
+        && positiveCents(data.amountCents) && data.payerMemberId is string
+        && get(memberPath(ledgerId, data.payerMemberId)).data.name is string
+        && (ledgerOwner(ledgerId) || get(memberPath(ledgerId, data.payerMemberId)).data.uid == request.auth.uid)
+        && data.shares is map && validExpenseShares(ledgerId, data, true)
+        && data.status in ['active', 'paused', 'archived']
+        && ((data.frequency == 'none' && data.startDate == null)
+          || (data.frequency in ['weekly', 'monthly', 'yearly'] && calendarDate(data.startDate)));
     }
 
     function approvedInvite(token, ledgerId, memberId, uid) {
@@ -234,10 +326,13 @@ service cloud.firestore {
       match /expenses/{expenseId} {
         allow read: if ledgerMember(ledgerId);
         allow create: if ledgerMember(ledgerId)
-          && exactFields(request.resource.data, [
+          && request.resource.data.keys().hasAll([
             'title', 'date', 'amountCents', 'payerMemberId', 'shares', 'repaid',
-            'status', 'createdByUid', 'createdAt', 'lastPaymentId', 'reversedAt'
-          ])
+            'status', 'createdByUid', 'createdAt', 'lastPaymentId', 'reversedAt'])
+          && request.resource.data.keys().hasOnly([
+            'title', 'date', 'amountCents', 'payerMemberId', 'shares', 'repaid',
+            'status', 'createdByUid', 'createdAt', 'lastPaymentId', 'reversedAt',
+            'sourceTemplateId', 'sourceDate'])
           && request.resource.data.title is string && request.resource.data.title.size() > 0
           && calendarDate(request.resource.data.date)
           && positiveCents(request.resource.data.amountCents)
@@ -245,7 +340,7 @@ service cloud.firestore {
           && get(memberPath(ledgerId, request.resource.data.payerMemberId)).data.name is string
           && (ledgerOwner(ledgerId)
             || get(memberPath(ledgerId, request.resource.data.payerMemberId)).data.uid == request.auth.uid)
-          && request.resource.data.shares is map && validExpenseShares(ledgerId, request.resource.data)
+          && request.resource.data.shares is map && validExpenseSource(ledgerId, expenseId, request.resource.data)
           && request.resource.data.repaid is map
           && request.resource.data.repaid.keys().toSet() == request.resource.data.shares.keys().toSet()
           && request.resource.data.repaid.values().hasOnly([0])
@@ -264,6 +359,50 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /expenseDetails/{expenseId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if ledgerMember(ledgerId)
+          && getAfter(expensePath(ledgerId, expenseId)).data.createdByUid == request.auth.uid
+          && getAfter(expensePath(ledgerId, expenseId)).data.createdAt == request.time
+          && validExtras(request.resource.data, getAfter(expensePath(ledgerId, expenseId)).data);
+        allow update, delete: if false;
+      }
+      match /expenseReceipts/{expenseId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if ledgerMember(ledgerId)
+          && getAfter(expensePath(ledgerId, expenseId)).data.createdByUid == request.auth.uid
+          && getAfter(expensePath(ledgerId, expenseId)).data.createdAt == request.time
+          && validReceipts(request.resource.data);
+        allow update, delete: if false;
+      }
+      match /templateDetails/{templateId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create, update: if ledgerMember(ledgerId)
+          && (ledgerOwner(ledgerId) || getAfter(templatePath(ledgerId, templateId)).data.createdByUid == request.auth.uid)
+          && getAfter(templatePath(ledgerId, templateId)).data.updatedAt == request.time
+          && validExtras(request.resource.data, getAfter(templatePath(ledgerId, templateId)).data);
+        allow delete: if false;
+      }
+      match /templates/{templateId} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if ledgerMember(ledgerId) && validTemplate(ledgerId, request.resource.data)
+          && request.resource.data.createdByUid == request.auth.uid
+          && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time;
+        allow update: if templateManager(ledgerId, resource.data)
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && ((request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+              && request.resource.data.status in ['active', 'paused', 'archived'])
+            || validTemplate(ledgerId, request.resource.data));
+        allow delete: if false;
+      }
+      match /occurrences/{key} {
+        allow read: if ledgerMember(ledgerId);
+        allow create: if ledgerMember(ledgerId) && validOccurrence(ledgerId, key, request.resource.data);
+        allow update, delete: if false;
+      }
+
       match /payments/{paymentId} {
         allow read: if ledgerMember(ledgerId);
         allow create: if receiver(ledgerId, get(expensePath(ledgerId, request.resource.data.expenseId)).data)
@@ -276,6 +415,20 @@ service cloud.firestore {
           && validPaymentTransition(ledgerId, resource.data.expenseId, request.resource.data.reversedBy);
         allow delete: if false;
       }
+    }
+
+    function validOccurrence(ledgerId, key, record) {
+      let template = get(templatePath(ledgerId, record.templateId)).data;
+      return exactFields(record, ['templateId', 'date', 'status', 'expenseId', 'createdByUid', 'createdAt'])
+        && record.templateId is string && record.date is string && key == record.templateId + '_' + record.date
+        && templateManager(ledgerId, template) && validScheduleDate(template, record.date)
+        && record.createdByUid == request.auth.uid && record.createdAt == request.time
+        && ((record.status == 'skipped' && record.expenseId == null)
+          || (record.status == 'posted' && record.expenseId is string
+            && !exists(expensePath(ledgerId, record.expenseId))
+            && getAfter(expensePath(ledgerId, record.expenseId)).data.sourceTemplateId == record.templateId
+            && getAfter(expensePath(ledgerId, record.expenseId)).data.sourceDate == record.date
+            && getAfter(expensePath(ledgerId, record.expenseId)).data.createdByUid == request.auth.uid));
     }
 
     // Both sides must be committed together: no standalone journal, balance

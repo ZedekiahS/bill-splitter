@@ -364,3 +364,129 @@ test("31 eight participants with a separate payer stay within Firestore access l
   await allowed(write(`${ledgerPath}/members/ninth`, member("Ninth"), OWNER, { serverTimes: ["createdAt"] }));
   await denied(write(`${ledgerPath}/expenses/nine-person`, expense({ shares: { ...shares, ninth: 1000 }, repaid: { ...repaid, ninth: 0 } }), OWNER, { serverTimes: ["createdAt"] }));
 });
+
+function recurringTemplate(overrides = {}) {
+  return {title:'Monthly rent',amountCents:15000,payerMemberId:'receiver',shares:{debtor:10000,guest:5000},
+    frequency:'monthly',startDate:'2026-01-31',status:'active',createdByUid:OWNER,...overrides};
+}
+async function createTemplate(overrides={},uid=OWNER,id='rent') {
+  return allowed(write(`${ledgerPath}/templates/${id}`,recurringTemplate(overrides),uid,{serverTimes:['createdAt','updatedAt']}));
+}
+function postOccurrence({templateId='rent',date='2026-01-31',id='rent-jan',actor=OWNER,expensePatch={},occurrencePatch={},include=['expense','occurrence','details']}={}) {
+  const writes={
+    details:update(`${ledgerPath}/expenseDetails/${id}`,{note:'Confirmed rent',items:[]}),
+    expense:update(`${ledgerPath}/expenses/${id}`,expense({sourceTemplateId:templateId,sourceDate:date,createdByUid:actor,...expensePatch}),{serverTimes:['createdAt']}),
+    occurrence:update(`${ledgerPath}/occurrences/${templateId}_${date}`,{templateId,date,status:'posted',expenseId:id,createdByUid:actor,...occurrencePatch},{serverTimes:['createdAt']})
+  };
+  return commit(include.map(name=>writes[name]),actor);
+}
+
+test('32 templates use ledger membership and prevent payer impersonation',async()=>{
+  await createTemplate();
+  await allowed(get(`${ledgerPath}/templates/rent`,DEBTOR));
+  await denied(get(`${ledgerPath}/templates/rent`,OUTSIDER));
+  await denied(write(`${ledgerPath}/templates/fake`,recurringTemplate({createdByUid:DEBTOR}),DEBTOR,{serverTimes:['createdAt','updatedAt']}));
+  await createTemplate({createdByUid:RECEIVER},RECEIVER,'own');
+});
+test('33 only creator or owner can manage templates; creation identity is immutable',async()=>{
+  await createTemplate({createdByUid:RECEIVER},RECEIVER);
+  const path=`${ledgerPath}/templates/rent`;
+  await denied(write(path,{status:'paused'},DEBTOR,{merge:true,serverTimes:['updatedAt']}));
+  await allowed(write(path,{status:'paused'},RECEIVER,{merge:true,serverTimes:['updatedAt']}));
+  await allowed(write(path,{status:'active'},OWNER,{merge:true,serverTimes:['updatedAt']}));
+  await denied(write(path,{createdByUid:OWNER},RECEIVER,{merge:true,serverTimes:['updatedAt']}));
+  await denied(remove(path,OWNER));
+});
+test('34 receipt and item details are readable only with the expense and cannot be rewritten',async()=>{
+  const details={note:'Dinner receipt',items:[{title:'Soup',amountCents:10000,memberIds:['debtor']},{title:'Drink',amountCents:5000,memberIds:['guest']}],receipts:[{name:'receipt.pdf',type:'application/pdf',size:5,dataUrl:'data:application/pdf;base64,JVBERi0='}]};
+  const path=`${ledgerPath}/expenses/details`;
+  await allowed(commit([update(path,expense(),{serverTimes:['createdAt']}),update(`${ledgerPath}/expenseDetails/details`,{note:details.note,items:details.items}),update(`${ledgerPath}/expenseReceipts/details`,{files:details.receipts})],OWNER));
+  await denied(get(`${ledgerPath}/expenseDetails/details`,OUTSIDER));
+  await denied(get(`${ledgerPath}/expenseReceipts/details`,OUTSIDER));
+  await denied(write(`${ledgerPath}/expenseDetails/details`,{note:'Changed'},OWNER,{merge:true}));
+});
+test('35 detail bounds reject oversized notes, active content and invalid item members or totals',async()=>{
+  for(const patch of [
+    {note:'x'.repeat(1001)},
+    {receipts:[{name:'script.svg',type:'image/svg+xml',size:5,dataUrl:'data:image/svg+xml;base64,YWJjZGU='}]},
+    {receipts:[{name:'large.png',type:'image/png',size:204801,dataUrl:'data:image/png;base64,YWJjZGU='}]},
+    {items:[{title:'Missing',amountCents:15000,memberIds:['unknown']}]},
+    {items:[{title:'Wrong total',amountCents:14999,memberIds:['guest']}]},
+    {items:[{title:'Duplicate',amountCents:15000,memberIds:['guest','guest']}]},
+  ]) await denied(commit([update(`${ledgerPath}/expenses/bad-details`,expense(),{serverTimes:['createdAt']}),update(`${ledgerPath}/expenseDetails/bad-details`,{note:patch.note||'',items:patch.items||[]}),update(`${ledgerPath}/expenseReceipts/bad-details`,{files:patch.receipts||[]})],OWNER));
+});
+test('36 recurring posting atomically links a new expense and its occurrence',async()=>{
+  await createTemplate();
+  await denied(postOccurrence({include:['expense']}));
+  await denied(postOccurrence({include:['occurrence']}));
+  await denied(postOccurrence({occurrencePatch:{expenseId:'other'}}));
+  await allowed(postOccurrence());
+});
+test('37 completed occurrence cannot be reused or removed even after its expense is reversed',async()=>{
+  await createTemplate(); await allowed(postOccurrence());
+  await denied(postOccurrence({id:'second-post'}));
+  await allowed(write(`${ledgerPath}/expenses/rent-jan`,{status:'reversed'},OWNER,{merge:true,serverTimes:['reversedAt']}));
+  await denied(postOccurrence({id:'after-reversal'}));
+  await denied(remove(`${ledgerPath}/occurrences/rent_2026-01-31`,OWNER));
+});
+test('38 skipped dates cannot later be posted and other members cannot skip them',async()=>{
+  await createTemplate();
+  const path=`${ledgerPath}/occurrences/rent_2026-01-31`,record={templateId:'rent',date:'2026-01-31',status:'skipped',expenseId:null,createdByUid:DEBTOR};
+  await denied(write(path,record,DEBTOR,{serverTimes:['createdAt']}));
+  await allowed(write(path,{...record,createdByUid:OWNER},OWNER,{serverTimes:['createdAt']}));
+  await denied(postOccurrence());
+});
+test('39 occurrence dates respect schedule, month end, future and paused state',async()=>{
+  await createTemplate();
+  await denied(postOccurrence({date:'2026-02-27'}));
+  await denied(postOccurrence({date:'2099-01-31'}));
+  await denied(postOccurrence({date:'2026-01-01'}));
+  await allowed(postOccurrence({date:'2026-02-28',id:'february'}));
+  await allowed(write(`${ledgerPath}/templates/rent`,{status:'paused'},OWNER,{merge:true,serverTimes:['updatedAt']}));
+  await denied(postOccurrence());
+});
+test('40 recurring payer and participant scope stays within the validated template',async()=>{
+  await createTemplate();
+  await denied(postOccurrence({expensePatch:{payerMemberId:'owner'}}));
+  await denied(postOccurrence({expensePatch:{shares:{owner:15000},repaid:{owner:0}}}));
+  await denied(postOccurrence({actor:RECEIVER}));
+  await allowed(postOccurrence({expensePatch:{amountCents:20000,shares:{debtor:10000,guest:10000}}}));
+});
+test('41 recurring expenses support eight sharers and a separate payer within rule lookup limits',async()=>{
+  const ids=Array.from({length:8},(_,i)=>`roommate-${i}`),shares=Object.fromEntries(ids.map(id=>[id,1000])),repaid=Object.fromEntries(ids.map(id=>[id,0]));
+  await allowed(commit(ids.map(id=>update(`${ledgerPath}/members/${id}`,member(id),{serverTimes:['createdAt']})),null,{admin:true}));
+  await createTemplate({amountCents:8000,shares});
+  await allowed(postOccurrence({expensePatch:{amountCents:8000,shares,repaid}}));
+});
+
+
+test('42 eight item rows, eight members and three receipts remain within rule budgets',async()=>{
+  const ids=Array.from({length:8},(_,i)=>`meal-${i}`), shares=Object.fromEntries(ids.map(id=>[id,1000])),repaid=Object.fromEntries(ids.map(id=>[id,0]));
+  await allowed(commit(ids.map(id=>update(`${ledgerPath}/members/${id}`,member(id),{serverTimes:['createdAt']})),null,{admin:true}));
+  const items=Array.from({length:8},(_,i)=>({title:`Dish ${i}`,amountCents:1000,memberIds:ids}));
+  await allowed(commit([
+    update(`${ledgerPath}/expenses/eight-items`,expense({amountCents:8000,shares,repaid}),{serverTimes:['createdAt']}),
+    update(`${ledgerPath}/expenseDetails/eight-items`,{note:'Shared dishes',items}),
+    update(`${ledgerPath}/expenseReceipts/eight-items`,{files:Array.from({length:3},()=>({name:'receipt.pdf',type:'application/pdf',size:5,dataUrl:'data:application/pdf;base64,JVBERi0='}))})
+  ],OWNER));
+});
+
+test('43 detail and receipt documents cannot be attached to old expenses or rewritten',async()=>{
+  await denied(write(`${ledgerPath}/expenseDetails/${EXPENSE}`,{note:'Late tampering',items:[]},OWNER));
+  await denied(write(`${ledgerPath}/expenseReceipts/${EXPENSE}`,{files:[]},OWNER));
+  await denied(write(`${ledgerPath}/expenseDetails/missing`,{note:'Orphan',items:[]},OWNER));
+});
+test('44 template detail edits require an authorized atomic template update',async()=>{
+  await createTemplate();
+  const path=`${ledgerPath}/templateDetails/rent`;
+  await denied(write(path,{note:'Unlinked edit',items:[]},OWNER));
+  await denied(commit([
+    update(`${ledgerPath}/templates/rent`,{status:'active'},{merge:true,serverTimes:['updatedAt']}),
+    update(path,{note:'Unauthorized edit',items:[]})
+  ],DEBTOR));
+  await allowed(commit([
+    update(`${ledgerPath}/templates/rent`,{status:'active'},{merge:true,serverTimes:['updatedAt']}),
+    update(path,{note:'Updated note',items:[]})
+  ],OWNER));
+  await denied(get(path,OUTSIDER));
+});

@@ -2,15 +2,20 @@ import { t, getLanguage, setLanguage, translatePage, formatDate, translateError,
 import messages from './app-messages.mjs';
 import { createStore } from './ledger-store.mjs';
 import { parseMoney, formatMoney, splitShares, consumptionShares, memberBalances, remainingFor, settlementText } from './ledger-core.mjs';
+import { openExpenseEditor } from './expense-entry.mjs';
+import { dueOccurrences } from './expense-features.mjs';
+import { receiptBlob } from './receipt-files.mjs';
+import featureMessages from './feature-messages.mjs';
 import { bindExpenseSearch } from './expense-search.mjs';
 
 registerMessages(messages);
+registerMessages(featureMessages);
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const params = new URLSearchParams(location.search);
 const demo = params.get('demo') === '1';
-const state = { store: null, ledgers: [], snapshot: null, view: location.hash.slice(1) || 'overview', filter: 'all', search: '', starting: true, startupError: null, invitation: null, claimSubmitted: false };
+const state = { store: null, ledgers: [], snapshot: null, view: location.hash.slice(1) || 'overview', filter: 'all', search: '', expenseTab:'records', showArchived:false, starting: true, startupError: null, invitation: null, claimSubmitted: false };
 const views = [{id:'overview',name:'总览',icon:'home'},{id:'expenses',name:'账单',icon:'receipt'},{id:'settlements',name:'结算',icon:'arrows'},{id:'members',name:'成员',icon:'people'}];
 const paths = {
   home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9',
@@ -85,7 +90,7 @@ async function loadData(preferredId) {
   state.ledgers=await state.store.listLedgers();
   const id=[preferredId,oldId,params.get('ledger'),state.ledgers[0]?.id].find(id=>state.ledgers.some(l=>l.id===id));
   state.snapshot=id?await state.store.loadLedger(id):null;
-  if(id!==oldId){state.search='';state.filter='all';}
+  if(id!==oldId){state.search='';state.filter='all';state.expenseTab='records';state.showArchived=false;}
   state.startupError=null;render();
   if(id){const url=new URL(location.href);url.searchParams.set('ledger',id);url.hash=state.view;history.replaceState(null,'',url);}
 }
@@ -97,7 +102,7 @@ function render() {
   if (!state.snapshot) {$('#main-content').innerHTML=heading(t('从第一本账开始'),t('把一次旅行，或每一天的小账，记在一起。'))+empty(t('还没有共享账本'),t('新建账本后，可以先用名字添加成员。'),`<button class="button primary" data-action="new-ledger">${t('新建账本')}</button>`);return;}
   if (!views.some(v=>v.id===state.view)) state.view='overview';
   $('#main-content').innerHTML=({overview:overview,expenses:expensesView,settlements:settlementsView,members:membersView}[state.view])();
-  if(state.view==='expenses')bindExpenseSearch($('#expense-search'),value=>{state.search=value;updateExpenseResults();});
+  if(state.view==='expenses'&&state.expenseTab==='records')bindExpenseSearch($('#expense-search'),value=>{state.search=value;updateExpenseResults();});
 }
 function myTotals() {
   const id=mine()?.id; let receivable=0,payable=0;
@@ -154,8 +159,23 @@ function updateExpenseResults() {
 }
 function expensesView() {
   const filtered=filteredExpenses();
-  return heading(t('每一笔，都有来处。'),t('查看共同开销，也看清自己承担的部分。'),newExpenseButton())+
+  const due=dueOccurrences(state.snapshot.templates || [],state.snapshot.occurrences || [],localDate());
+  const tabs=`<div class="expense-tabs" role="group" aria-label="${t('账单内容')}">${[['records',t('已记账')],['drafts',t('待确认')+(due.length?` (${due.length})`:'')],['templates',t('模板与周期')]].map(([id,label])=>`<button class="chip ${state.expenseTab===id?'active':''}" data-expense-tab="${id}" aria-pressed="${state.expenseTab===id}">${label}</button>`).join('')}</div>`;
+  const top=heading(t('每一笔，都有来处。'),t('查看共同开销，也看清自己承担的部分。'),newExpenseButton())+tabs;
+  if(state.expenseTab==='templates')return top+templatesView();
+  if(state.expenseTab==='drafts')return top+draftsView(due);
+  return top+
   `<div class="filter-bar"><div class="filter-chips">${[['all',t('全部')],['mine',t('我垫付')],['participating',t('我参与')],['open',t('未结清')]].map(([id,label])=>`<button class="chip ${state.filter===id?'active':''}" data-filter="${id}" aria-pressed="${state.filter===id}">${label}</button>`).join('')}</div><label class="search-field">${icon('search')}<input id="expense-search" type="search" placeholder="${t('搜索账单')}" aria-label="${t('搜索账单')}" value="${escape(state.search)}" aria-controls="expense-results"></label></div><div class="expense-results-summary"><p id="expense-result-count" role="status" aria-live="polite">${t('{count}笔账单',{count:filtered.length})}</p><button id="clear-expense-filters" class="text-link" data-action="clear-expense-filters" ${hasExpenseFilters()?'':'hidden'}>${t('清除筛选')}</button></div><section id="expense-results" class="panel">${expenseResults(filtered)}</section>`;
+}
+const canManageTemplate = template => owner() || template.createdByUid===state.store.currentUser.uid;
+const scheduleLabel = frequency => ({none:t('按需使用'),weekly:t('每周'),monthly:t('每月'),yearly:t('每年')})[frequency];
+function templatesView() {
+  const templates=(state.snapshot.templates || []).filter(template=>state.showArchived?template.status==='archived':template.status!=='archived');
+  return `<section class="panel plan-section"><div class="section-heading"><h2>${state.showArchived?t('已归档模板'):t('常用账单')}</h2><button class="text-link" data-action="toggle-archived">${state.showArchived?t('返回常用模板'):t('查看归档')}</button><button class="button secondary" data-action="new-template">${icon('plus')}${t('新建模板')}</button></div>${templates.length?`<div class="plan-list">${templates.map(template=>`<div class="plan-row"><div class="plan-info"><strong>${escape(template.title)} ${template.status==='paused'?`<span class="badge neutral">${t('已暂停')}</span>`:''}</strong><small>${scheduleLabel(template.frequency)}${template.startDate?' · '+escape(template.startDate):''} · ${t('{name}垫付',{name:escape(memberName(template.payerMemberId))})}</small></div><strong class="plan-amount">${money(template.amountCents)}</strong><div class="plan-actions">${template.status==='archived'&&canManageTemplate(template)?`<button class="button secondary small-button" data-template-status="active" data-template-id="${escape(template.id)}">${t('恢复')}</button>`:''}<button ${template.status==='archived'?'hidden':''} class="button secondary small-button" data-use-template="${escape(template.id)}">${t('使用模板')}</button>${canManageTemplate(template)&&template.status!=='archived'?`<button class="text-link" data-edit-template="${escape(template.id)}">${t('编辑')}</button>${template.frequency!=='none'?`<button class="text-link" data-template-status="${template.status==='paused'?'active':'paused'}" data-template-id="${escape(template.id)}">${template.status==='paused'?t('恢复'):t('暂停')}</button>`:''}<button class="text-link" data-template-status="archived" data-template-id="${escape(template.id)}">${t('归档')}</button>`:''}</div></div>`).join('')}</div>`:empty(state.showArchived?t('没有已归档模板'):t('把常用开销存成模板'),state.showArchived?'':t('保存金额和分摊，下次直接使用；设置周期后，到期再确认。'))}</section>`;
+}
+function draftsView(due) {
+  if(!due.length)return `<section class="panel">${empty(t('没有待确认的周期账单'),t('设置周期模板后，到期账单会出现在这里。'),`<button class="button secondary" data-action="new-template">${t('新建模板')}</button>`)}</section>`;
+  return `<section class="panel plan-section"><div class="section-heading"><h2>${t('到期待确认')}</h2><span class="count-label">${t('{count}笔账单',{count:due.length})}</span></div><p class="form-hint">${t('确认后才计入支出；未发生的开销可以跳过本期。')}</p><div class="plan-list">${due.map(draft=>{const template=state.snapshot.templates.find(row=>row.id===draft.templateId);return `<div class="plan-row"><div class="plan-info"><strong>${escape(template.title)}</strong><small>${escape(draft.date)} · ${scheduleLabel(template.frequency)}</small></div><strong class="plan-amount">${money(template.amountCents)}</strong><div class="plan-actions">${canManageTemplate(template)?`<button class="button primary small-button" data-confirm-template="${escape(template.id)}" data-occurrence-date="${draft.date}">${t('确认账单')}</button><button class="text-link" data-skip-template="${escape(template.id)}" data-occurrence-date="${draft.date}">${t('跳过本期')}</button>`:`<span class="form-hint">${t('待创建人或管理员确认')}</span>`}</div></div>`;}).join('')}</div></section>`;
 }
 function settlementsView() {
   const pending=[];
@@ -199,68 +219,29 @@ function newMember() {
   openDialog(t('添加一位伙伴'),`<form id="member-form"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="name" maxlength="40" placeholder="${t('输入名字或熟悉的称呼')}" required autofocus></label><p class="form-hint">${t('现在就可以为这位伙伴记账，之后再邀请本人认领。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('添加成员')}</button></div></form>`);
   $('#member-form').addEventListener('submit',e=>submitForm(e,async data=>{await state.store.addMember(state.snapshot.ledger.id,data.get('name').trim());await finishSave(t('成员已添加，可以开始分摊了。'));}));
 }
-function newExpense() {
+function newExpense(options={}) {
   if(!state.snapshot)return newLedger();
-  const s=state.snapshot, me=mine(); let splitType='equal', amountDraftInitialized=false;
-  const defaultCount=Math.min(s.members.length,8);
-  const payerOptions=s.members.filter(m=>owner()||m.uid===state.store.currentUser.uid).map(m=>`<option value="${escape(m.id)}" ${m.id===me?.id?'selected':''}>${escape(m.name)}${m.id===me?.id?t('（我）'):''}</option>`).join('');
-  const percentRows=s.members.map((m,i)=>`<div class="percent-field" data-percent-member="${escape(m.id)}"><label for="percent-${i}">${escape(m.name)}</label><span class="split-input-unit"><input id="percent-${i}" class="form-input" type="number" min="0" max="100" step="0.01" inputmode="decimal" data-percent="${escape(m.id)}" value="${i<defaultCount?((Math.floor(10000/defaultCount)+(i<10000%defaultCount?1:0))/100).toFixed(2):'0.00'}" aria-label="${t('{name}的比例', {name:escape(m.name)})}" aria-describedby="percent-result-${i}"><span>%</span></span><output id="percent-result-${i}" for="new-amount percent-${i}" data-percent-result="${escape(m.id)}" class="split-converted" aria-live="off">—</output></div>`).join('');
-  const amountRows=s.members.map(m=>`<label class="amount-field" data-amount-member="${escape(m.id)}"><span>${escape(m.name)}</span><span class="split-input-unit"><input class="form-input" inputmode="decimal" data-share-amount="${escape(m.id)}" placeholder="0.00" aria-label="${t('{name}承担金额', {name:escape(m.name)})}"><span>${escape(s.ledger.currency)}</span></span></label>`).join('');
-  openDialog(t('记一笔共同开销'),`<form id="expense-form"><div class="entry-layout"><div class="entry-fields"><label class="form-field"><span class="field-label">${t('金额 ·')} ${escape(s.ledger.currency)}</span><input name="amount" id="new-amount" class="form-input amount-input" inputmode="decimal" placeholder="0.00" required autofocus></label><label class="form-field"><span class="field-label">${t('花在了哪里？')}</span><input class="form-input" name="title" maxlength="100" placeholder="${t('例如：周五一起吃火锅')}" required></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('谁先垫付')}</span><select class="form-select" name="payer">${payerOptions}</select></label><label class="form-field"><span class="field-label">${t('日期')}</span><input class="form-input" name="date" type="date" value="${localDate()}" required></label></div><fieldset class="participant-fieldset"><legend class="field-label">${t('谁参与这笔消费')}</legend><div class="participant-grid">${s.members.map((m,i)=>`<label class="member-check"><input type="checkbox" name="participant" value="${escape(m.id)}" ${i<8?'checked':''}>${avatar(m.name)}<span>${escape(m.name)}</span></label>`).join('')}</div><p class="form-hint">${t('付款人也可以参与分摊。只勾选实际消费的人，每笔最多 8 人。')}</p></fieldset><div class="split-choice" role="group" aria-label="${t('分摊方式')}"><button type="button" class="chip active" data-split="equal" aria-pressed="true">${t('均分')}</button><button type="button" class="chip" data-split="percent" aria-pressed="false">${t('按比例')}</button><button type="button" class="chip" data-split="amount" aria-pressed="false">${t('按金额')}</button></div><div id="percent-fields" hidden>${percentRows}<p class="form-hint">${t('每行右侧显示该比例对应的金额，精确到分。')}</p></div><div id="amount-fields" hidden><p class="form-hint">${t('直接填写每个人承担的金额，合计需要与账单总额一致。')}</p>${amountRows}<p id="amount-summary" class="split-summary" role="status"></p></div></div><aside class="entry-preview"><h3>${t('分摊预览')}</h3><div id="split-preview"><p class="muted">${t('填写金额后，就能看到每人承担多少。')}</p></div></aside></div>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('保存账单')}</button></div></form>`,'',true);
-  const form=$('#expense-form');
-  const draftValues=attribute=>Object.fromEntries([...form.querySelectorAll(`[${attribute}]`)].map(input=>[input.getAttribute(attribute),input.value]));
-  function calculate() {
-    const data=new FormData(form),amount=parseMoney(data.get('amount')),ids=data.getAll('participant');
-    if(ids.length>8)throw new Error('每笔最多选择 8 位分摊成员。');
-    return {amount,ids,shares:splitShares(amount,ids,{type:splitType,percentages:draftValues('data-percent'),amounts:draftValues('data-share-amount')})};
-  }
-  function amountSummary(chosen) {
-    const summary=$('#amount-summary');summary.dataset.state='';
-    try {
-      const total=parseMoney(form.elements.amount.value),values=draftValues('data-share-amount');let assigned=0n,missing=0;
-      for(const id of chosen){if(!values[id].trim()){missing++;continue;}assigned+=BigInt(parseMoney(values[id],{allowZero:true}));}
-      if(assigned>BigInt(Number.MAX_SAFE_INTEGER))throw new Error('分配金额合计超出支持范围。');
-      const sum=Number(assigned),difference=total-sum;
-      summary.textContent=`${t('已分配 {amount}', {amount:money(sum)})} · ${difference>0?t('还差 {amount}', {amount:money(difference)}):difference<0?t('超出 {amount}', {amount:money(-difference)}):t('与总额一致')}${missing?` · ${t('{count}人未填写', {count:missing})}`:''}`;
-      summary.dataset.state=difference<0?'error':difference===0&&!missing?'success':'';
-    }catch(error){summary.textContent=form.elements.amount.value?errorMessage(error):t('先填写账单总额，再分配每个人的金额。');}
-  }
-  function preview() {
-    const chosen=new FormData(form).getAll('participant');
-    form.querySelectorAll('[data-percent-member]').forEach(e=>{e.hidden=!chosen.includes(e.dataset.percentMember);e.querySelector('input').disabled=e.hidden||splitType!=='percent';});
-    form.querySelectorAll('[data-amount-member]').forEach(e=>{e.hidden=!chosen.includes(e.dataset.amountMember);e.querySelector('input').disabled=e.hidden||splitType!=='amount';});
-    form.querySelectorAll('[data-percent-result]').forEach(e=>{e.textContent='—';});
-    if(splitType==='amount')amountSummary(chosen);
-    try {
-      const {amount,shares}=calculate(),payer=form.elements.payer.value,total=Object.values(shares).reduce((a,b)=>a+b,0),self=(shares[payer]||0)+amount-total;
-      if(splitType==='percent')form.querySelectorAll('[data-percent-result]').forEach(e=>{if(Object.hasOwn(shares,e.dataset.percentResult))e.textContent=money(shares[e.dataset.percentResult]);});
-      $('#split-preview').innerHTML=`<div class="preview-list">${chosen.map(id=>`<div class="preview-row"><span>${escape(memberName(id))}${id===payer?` <small>${t('垫付人')}</small>`:''}</span><strong>${money(shares[id])}</strong></div>`).join('')}</div>${amount-total?`<p class="form-hint">${t('未分配 {amount}，由垫付人承担。', {amount:money(amount-total)})}</p>`:''}<div class="preview-total"><span>${t('总额')}</span><strong>${money(amount)}</strong></div><p class="form-hint">${t('垫付人自付 {self}，待收回 {remaining}。', {self:money(self),remaining:money(amount-self)})}</p>`;
-    }catch(error){$('#split-preview').innerHTML=`<p class="form-hint">${escape(form.elements.amount.value?errorMessage(error):t('填写金额后，就能看到每人承担多少。'))}</p>`;}
-  }
-  form.addEventListener('input',event=>{if(event.target.hasAttribute('data-share-amount'))amountDraftInitialized=true;$('#form-error').hidden=true;preview();});
-  form.addEventListener('change',preview);
-  form.querySelectorAll('[data-split]').forEach(button=>button.addEventListener('click',()=>{
-    if(button.dataset.split==='amount'&&!amountDraftInitialized){
-      try {
-        const data=new FormData(form),amount=parseMoney(data.get('amount')),ids=data.getAll('participant');let shares;
-        try{shares=calculate().shares;}catch{shares=splitShares(amount,ids);}
-        const remainder=amount-Object.values(shares).reduce((sum,value)=>sum+value,0),payer=data.get('payer');
-        if(remainder&&ids.includes(payer))shares[payer]+=remainder;
-        form.querySelectorAll('[data-share-amount]').forEach(input=>{if(Object.hasOwn(shares,input.dataset.shareAmount))input.value=amountText(shares[input.dataset.shareAmount]);});
-        amountDraftInitialized=true;
-      }catch{/* Leave fields empty until an amount and participants are available. */}
-    }
-    splitType=button.dataset.split;
-    form.querySelectorAll('[data-split]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});
-    $('#percent-fields').hidden=splitType!=='percent';$('#amount-fields').hidden=splitType!=='amount';$('#form-error').hidden=true;preview();
-  }));
-  form.addEventListener('submit',e=>submitForm(e,async data=>{const {amount,shares}=calculate();await state.store.addExpense(s.ledger.id,{title:data.get('title').trim(),date:data.get('date'),amountCents:amount,payerMemberId:data.get('payer'),shares});state.view='expenses';state.search='';state.filter='all';await finishSave(t('账单已保存，每个人的份额都记好了。'));}));
-  preview();
+  openExpenseEditor({snapshot:state.snapshot,user:state.store.currentUser,isOwner:owner(),openDialog,submitForm,errorSlot,formError,today:localDate(),onSave:async(payload,settings)=>{
+    if(settings.templateMode)await state.store.saveTemplate(state.snapshot.ledger.id,payload,settings.templateId);
+    else await state.store.addExpense(state.snapshot.ledger.id,payload);
+    state.view='expenses';state.expenseTab=settings.templateMode?'templates':'records';state.search='';state.filter='all';
+    await finishSave(settings.templateMode?t('模板已保存。'):t('账单已保存，每个人的份额都记好了。'));
+  }},options);
+}
+
+function expenseExtras(expense) {
+  const items=expense.items || [],receipts=expense.receipts || [],urls=[];
+  const attachments=receipts.map(receipt=>{
+    try {const url=URL.createObjectURL(receiptBlob(receipt));urls.push(url);return `<a class="receipt-row" href="${url}" download="${escape(receipt.name)}">${receipt.type.startsWith('image/')?`<img src="${url}" alt="${escape(receipt.name)}">`:icon('receipt')}<span>${escape(receipt.name)}<small>${t('下载收据')}</small></span></a>`;}
+    catch{return `<p class="form-hint">${escape(receipt.name)} · ${t('收据文件无效，无法打开。')}</p>`;}
+  }).join('');
+  if(urls.length)$('#action-dialog').addEventListener('close',()=>urls.forEach(url=>URL.revokeObjectURL(url)),{once:true});
+  return `${expense.sourceDate?`<p class="form-hint">${t('周期账单 · {date}',{date:escape(expense.sourceDate)})}</p>`:''}${items.length?`<section class="detail-items"><h3>${t('消费明细')}</h3>${items.map(item=>`<div class="detail-item"><strong>${escape(item.title)}</strong><strong>${money(item.amountCents)}</strong><small>${item.memberIds.map(id=>escape(memberName(id))).join('、')}</small></div>`).join('')}</section>`:''}${expense.note?`<section class="detail-note"><h3>${t('备注')}</h3><p>${escape(expense.note)}</p></section>`:''}${attachments?`<section class="receipt-gallery"><h3>${t('收据')}</h3>${attachments}</section>`:''}`;
 }
 function showExpense(id) {
   const e=state.snapshot.expenses.find(e=>e.id===id);if(!e)return;
   const shares=Object.entries(consumptionShares(e)).map(([id,cents])=>{const isPayer=id===e.payerMemberId,remaining=remainingFor(e,id),paid=e.repaid?.[id]||0;return `<div class="member-row">${avatar(memberName(id))}<div class="member-info"><strong>${escape(memberName(id))}${isPayer?t(' · 垫付人'):''}</strong><small>${isPayer?t('自己的消费份额'):paid?`${t('已还')} ${money(paid)}`:t('尚未还款')}</small></div><div class="expense-amount"><strong>${money(cents)}</strong><small>${isPayer?t('自付'):`${t('待付')} ${money(remaining)}`}</small></div>${!isPayer&&remaining>0&&e.status==='active'&&canReceive(e)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(id)}">${t('收款')}</button>`:''}</div>`;}).join('');
-  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${errorSlot()}`,e.status==='active'&&(owner()||e.createdByUid===state.store.currentUser.uid)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button><button class="button secondary" data-action="close-dialog">${t('完成')}</button>`:`<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
+  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>${e.status==='active'&&(owner()||e.createdByUid===state.store.currentUser.uid)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
 }
 function paymentDialog(expenseId,fromId) {
   const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
@@ -315,6 +296,18 @@ document.addEventListener('click', async event => {
   if (el.dataset.payment) {paymentDialog(el.dataset.payment,el.dataset.member);return;}
   if (el.dataset.inviteMember) {el.disabled=true;await invitationDialog(el.dataset.inviteMember);el.disabled=false;return;}
   if (el.dataset.filter) {state.filter=el.dataset.filter;render();return;}
+  if(el.dataset.expenseTab){state.expenseTab=el.dataset.expenseTab;render();return;}
+  if(el.dataset.templateFromExpense){newExpense({templateMode:true,initial:state.snapshot.expenses.find(e=>e.id===el.dataset.templateFromExpense)});return;}
+  if(el.dataset.useTemplate||el.dataset.editTemplate||el.dataset.confirmTemplate){
+    const id=el.dataset.useTemplate||el.dataset.editTemplate||el.dataset.confirmTemplate,template=state.snapshot.templates.find(row=>row.id===id);
+    if(template)newExpense({initial:template,templateMode:Boolean(el.dataset.editTemplate),templateId:el.dataset.editTemplate,occurrence:el.dataset.confirmTemplate?{date:el.dataset.occurrenceDate}:undefined});return;
+  }
+  if(el.dataset.skipTemplate){confirmAction(t('跳过本期账单？'),t('本期不会计入支出，下一期仍按计划生成。'),t('跳过本期'),()=>state.store.skipOccurrence(state.snapshot.ledger.id,el.dataset.skipTemplate,el.dataset.occurrenceDate),t('本期已跳过。'));return;}
+  if(el.dataset.templateStatus){
+    const change=()=>state.store.setTemplateStatus(state.snapshot.ledger.id,el.dataset.templateId,el.dataset.templateStatus);
+    if(el.dataset.templateStatus==='archived'){confirmAction(t('归档这个模板？'),t('归档后停止生成待确认账单，已有账单会保留。'),t('归档'),change,t('模板已归档。'));return;}
+    el.disabled=true;try{await change();await loadData();toast(t('周期状态已更新。'));}catch(error){toast(errorMessage(error));}finally{el.disabled=false;}return;
+  }
   if (el.dataset.reversePayment) {const p=state.snapshot.payments.find(p=>p.id===el.dataset.reversePayment);confirmAction(t('撤销这笔收款？'),t('将撤销 {name} 还款 {amount} 的确认，恢复相应待收金额，并保留更正记录。', {name:escape(memberName(p.fromMemberId)),amount:money(p.amountCents)}),t('确认撤销'),()=>state.store.reversePayment(state.snapshot.ledger.id,p.id));return;}
   if (el.dataset.reverseExpense) {const e=state.snapshot.expenses.find(e=>e.id===el.dataset.reverseExpense);confirmAction(t('撤销这笔账单？'),t('「{title}」将不再计入余额。已有关联还款时，需要先撤销对应收款记录。', {title:escape(e.title)}),t('撤销账单'),()=>state.store.reverseExpense(state.snapshot.ledger.id,e.id));return;}
   if (el.dataset.approve) {confirmAction(t('确认这位伙伴的身份'),t('确认申请人是你邀请的本人后，再将临时成员的账目关联到这个账号。'),t('确认并批准'),async()=>{await state.store.approveClaim(el.dataset.approve,el.dataset.uid);},t('认领已批准，伙伴可以用自己的账号共同记账了。'));return;}
@@ -324,6 +317,8 @@ document.addEventListener('click', async event => {
   if(action==='new-ledger')newLedger();
   if(action==='new-member')newMember();
   if(action==='new-expense')newExpense();
+  if(action==='new-template')newExpense({templateMode:true});
+  if(action==='toggle-archived'){state.showArchived=!state.showArchived;render();}
   if(action==='share')shareDialog();
   if(action==='account')accountDialog();
   if(action==='refresh') {el.disabled=true;try {await loadData();toast(t('账本已刷新。'));}catch(e){toast(errorMessage(e));}finally{el.disabled=false;}}

@@ -11,16 +11,20 @@ node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
 node tests/i18n.test.mjs
 node tests/expense-search.test.mjs
+node tests/expense-features.test.mjs
+node tests/expense-features-store.test.mjs
 ```
 
-All 117 local tests pass across these four suites.
+All 152 local tests pass across these six suites.
 
 | Suite | Cases | Coverage |
 | --- | ---: | --- |
 | `bill-calculations.test.mjs` | 65 | Original create/edit handlers, exact cents, percentage rounding, draft preservation, UTC grouping/filtering and daylight-saving boundaries |
 | `ledger-core.test.mjs` | 42 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
-| `i18n.test.mjs` | 6 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
+| `i18n.test.mjs` | 7 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
+| `expense-features.test.mjs` | 21 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
+| `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to
@@ -66,7 +70,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 | Suite | Cases | Fixed emulator project |
 | --- | ---: | --- |
 | `firestore-rules.test.mjs` | 32 | `demo-bill-splitter-permissions` |
-| `ledger-rules.test.mjs` | 31 | `demo-bill-splitter-ledgers` |
+| `ledger-rules.test.mjs` | 44 | `demo-bill-splitter-ledgers` |
 
 Each suite loads the repository's `firestore.rules`, clears only its fixed
 emulator project's data, and seeds synthetic fixtures. Non-loopback addresses
@@ -83,6 +87,9 @@ user tokens or no token. Production credentials and data are not used.
 | `ledgers/{id}` | Non-anonymous authenticated members can read; owner creates and grants membership through atomic invitation approval |
 | Ledger `members` | Ledger members can read; owner adds temporary identities and approves account binding |
 | Ledger `expenses` | Ledger members can read; owner can record for any member, other bound members only as themselves |
+| Ledger `templates`, `templateDetails` | Members read; creator or owner manages; an ordinary member records themselves as payer |
+| Ledger `occurrences` | Creator or owner skips or atomically posts a due occurrence; entries cannot be reused |
+| Ledger `expenseDetails`, `expenseReceipts` | Members read; written atomically with the associated expense and immutable afterward |
 | Ledger `payments` | Ledger members can read; recipient or owner confirms/reverses with matching expense balance updates |
 | `invites/{token}` and `claims` | Limited invitation preview for an authenticated token holder while open; claimants submit only their own identity; owner approves |
 
@@ -103,6 +110,12 @@ profile email and phone fields. They validate bill schema and ownership, but do
 not enforce the complete split arithmetic. Shared-ledger rules enforce share
 bounds and sums; calculation policy and full calendar-date validity remain client
 checks (rules validate the date string shape).
+
+Recurring/itemized coverage includes 8 items with 8 participants and 3 receipts,
+immutable detail records, creator/owner authorization, and atomic occurrence
+backlinks. Rules validate item shape, participant scope and total; exact per-item
+rounding remains client calculation policy. Detail and receipt documents are
+separate from financial records to stay within Firestore rule evaluation limits.
 
 The cloud adapter has not been exercised here with live accounts. Existing
 production documents have not been migrated. Tests and local preview **do not

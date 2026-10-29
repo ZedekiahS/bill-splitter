@@ -476,3 +476,78 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Expense plans and supporting details share the ledger's existing controls. */
+.expense-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 14px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+.expense-tabs .chip { min-height: 44px; }
+.plan-section { margin-bottom: 30px; }
+.plan-section > .form-hint { margin-bottom: 15px; }
+.plan-list { display: flex; flex-direction: column; }
+.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px 24px; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.plan-row:last-child { border-bottom: 0; }
+.plan-info { min-width: 0; }
+.plan-info strong { display: block; font-size: 15px; overflow-wrap: anywhere; }
+.plan-info small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.plan-info .badge { margin-top: 8px; }
+.plan-amount { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.plan-actions > button, .plan-actions > a { min-height: 44px; }
+.plan-actions .text-link { padding-inline: 8px; }
+.entry-extras { margin-top: 26px; border-top: 1px solid var(--border); }
+.entry-extras > summary { padding: 13px 0; min-height: 48px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.entry-extras > summary:hover { color: var(--primary); }
+.entry-extras[open] > summary { margin-bottom: 8px; }
+.entry-extras textarea { min-height: 96px; resize: vertical; }
+.entry-extras input[type="file"] { display: block; max-width: 100%; padding-block: 7px; font-size: 13px; }
+.entry-extras input[type="file"]::file-selector-button { min-height: 44px; margin-right: 12px; padding: 8px 13px; border: 1px solid var(--input-border); border-radius: var(--radius-control); color: var(--primary); background: var(--surface); font: inherit; cursor: pointer; }
+.entry-extras input[type="file"]::file-selector-button:hover { background: var(--surface-subtle); }
+.receipt-list { display: flex; flex-direction: column; gap: 8px; margin-block: 12px; }
+.receipt-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding-block: 9px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.receipt-row > img { flex: 0 0 48px; width: 48px; height: 58px; object-fit: contain; background: var(--surface-subtle); border-radius: 4px; }
+.receipt-row > span, .receipt-row > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.receipt-row small { display: block; color: var(--muted); font-size: 12px; }
+.receipt-row > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
+.item-list { display: flex; flex-direction: column; gap: 20px; margin-top: 18px; }
+.item-row { min-width: 0; margin: 0; padding: 0 0 18px; border: 0; border-bottom: 1px solid var(--border); }
+.item-row > legend { max-width: 100%; padding: 0 0 10px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.item-top { display: grid; grid-template-columns: minmax(0, 1fr) 130px 44px; align-items: end; gap: 10px; }
+.item-top .form-field { margin-bottom: 10px; }
+.item-top > button { min-width: 44px; min-height: 47px; margin-bottom: 10px; }
+.item-top .form-input[inputmode="decimal"] { text-align: right; font-variant-numeric: tabular-nums; }
+.item-members { display: flex; flex-wrap: wrap; gap: 8px; }
+.item-members label { display: flex; align-items: center; gap: 8px; min-height: 44px; max-width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 13px; overflow-wrap: anywhere; cursor: pointer; }
+.item-members label:has(input:checked) { border-color: var(--input-border); background: var(--primary-tint); color: var(--primary); }
+.item-members input { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.item-total { padding-block: 14px; text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.schedule-fields { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--border); }
+.schedule-fields > .form-hint { margin-top: 6px; }
+.detail-items { margin-block: 24px; }
+.detail-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding-block: 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.detail-item > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.detail-item > small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.detail-item > strong:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.detail-note { margin-block: 18px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.85; }
+.receipt-gallery { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 18px; }
+.receipt-gallery > a, .receipt-gallery > button { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 44px; max-width: 150px; min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--primary); font-size: 12px; text-align: left; text-decoration: none; overflow-wrap: anywhere; }
+.receipt-gallery > a:hover, .receipt-gallery > button:hover { border-color: var(--input-border); background: var(--surface-subtle); }
+.receipt-gallery img { display: block; width: 130px; max-width: 100%; height: 110px; object-fit: contain; background: var(--surface-subtle); }
+.receipt-gallery small { font-size: 12px; color: var(--muted); }
+@media (max-width: 900px) {
+  .plan-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; }
+  .plan-actions { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .expense-tabs { gap: 6px; margin-bottom: 20px; }
+  .expense-tabs .chip { flex: 1 1 auto; }
+  .plan-row { padding-block: 17px; }
+  .plan-info strong { font-size: 14px; }
+  .plan-amount { font-size: 15px; }
+  .plan-actions { justify-content: flex-start; }
+  .plan-actions .button { flex: 1 1 auto; }
+  .item-top { grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }
+  .item-top > .form-field:first-child { grid-column: 1 / -1; }
+  .item-top > button { align-self: end; }
+  .item-members label { font-size: 12px; }
+  .entry-extras input[type="file"] { width: 100%; font-size: 12px; }
+  .receipt-gallery > a, .receipt-gallery > button { max-width: calc(50% - 6px); }
+}

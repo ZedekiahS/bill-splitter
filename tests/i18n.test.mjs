@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { settlementText } from '../public/scripts/ledger-core.mjs';
 import { loginMessages, authErrorSource } from '../public/scripts/login-messages.mjs';
+import featureMessages from '../public/scripts/feature-messages.mjs';
 
 const saved = new Map([['bill-splitter-ledger-demo-v1', 'unchanged ledger data']]);
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
@@ -11,6 +12,7 @@ Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
 } });
 const { t, registerMessages, setLanguage, getLanguage, formatDate, translateError } = await import('../public/scripts/i18n.mjs');
 registerMessages(loginMessages);
+registerMessages(featureMessages);
 
 test('language selection persists across page loads without changing ledger data', async () => {
   assert.equal(getLanguage(), 'zh-CN');
@@ -68,10 +70,30 @@ test('all shared-ledger source messages and login labels have English translatio
   const { default: appMessages } = await import('../public/scripts/app-messages.mjs');
   registerMessages(appMessages);
   setLanguage('en');
-  const app = await readFile(new URL('../public/scripts/app.mjs', import.meta.url), 'utf8');
-  const keys = [...app.matchAll(/\bt\((['"])(.*?)\1/g)].map(match => match[2]);
+  const sources = await Promise.all(['app.mjs', 'expense-entry.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const keys = sources.flatMap(source => [...source.matchAll(/\bt\((['"])(.*?)\1/g)].map(match => match[2]));
   const login = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   keys.push(...[...login.matchAll(/data-i18n="([^"]+)"/g)].map(match => match[1]));
   const missing = [...new Set(keys)].filter(key => /[\u4e00-\u9fff]/.test(t(key)));
   assert.deepEqual(missing, []);
+});
+
+test('item, receipt and recurring-expense errors retain actionable English messages', async () => {
+  setLanguage('en');
+  for (const source of [
+    '项目名称不能为空，且不能超过 120 个字。',
+    '项目合计或分摊金额与账单不一致，请重新核对。',
+    '每份收据不能超过 200 KB。',
+    '请选择有效的 JPG、PNG、WebP 图片或 PDF 收据。',
+    '只有模板创建者或账本管理员可以管理此模板。',
+    '这期账单已经处理，请刷新账本。',
+  ]) {
+    assert.equal(translateError(new Error(source)), featureMessages[source]);
+    assert.doesNotMatch(translateError(new Error(source)), /[\u4e00-\u9fff]/);
+  }
+  assert.equal(t('移除收据 {name}', { name: '收据 {name}.pdf' }), 'Remove receipt 收据 {name}.pdf');
+  const sources = await Promise.all(['expense-entry.mjs', 'expense-features.mjs', 'receipt-files.mjs', 'ledger-store.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const errors = [...new Set(sources.flatMap(source => [...source.matchAll(/\bError\((['"])(.*?)\1/g)].map(match => match[2])))];
+  const internal = new Set(['请明确选择 demo 或 cloud 模式。', '浏览器不支持本地演示存储。', 'Firebase 尚未配置，请使用演示模式或配置真实服务。']);
+  assert.deepEqual(errors.filter(source => !internal.has(source) && /[\u4e00-\u9fff]/.test(t(source))), []);
 });

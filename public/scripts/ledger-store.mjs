@@ -1,8 +1,18 @@
-import { assertCents, remainingFor, splitShares, validateDate } from "./ledger-core.mjs";
+import { assertCents, remainingFor, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
+import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
 
 const DEMO_KEY = "bill-splitter-ledger-demo-v1";
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const withId = (id, value) => ({ ...value, id });
+function splitDetails(record) {
+  const { note = "", items = [], receipts = [], ...base } = record;
+  return { base, details: { note, items }, receipts: { files: receipts } };
+}
+function attachDetails(records, details, receipts = []) {
+  const files = new Map(receipts.map(({id, files}) => [id, files]));
+  const byId = new Map(details.map(({ id, note, items }) => [id, { note, items, receipts: files.get(id) || [] }]));
+  return records.map(record => ({ ...record, ...(byId.get(record.id) || { note: record.note || "", items: record.items || [], receipts: record.receipts || [] }) }));
+}
 function newId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   const bytes = new Uint8Array(24);
@@ -45,8 +55,38 @@ function expenseData(payload, members, uid, createdAt) {
     title: text(payload.title, "费用名称"), date: validateDate(payload.date), amountCents, payerMemberId, shares,
     repaid: Object.fromEntries(entries.map(([id]) => [id, 0])), status: "active", createdByUid: uid,
     createdAt, lastPaymentId: null, reversedAt: null,
+    ...validateExpenseExtras({ ...payload, amountCents, shares }),
+    sourceTemplateId: payload.sourceTemplateId || null, sourceDate: payload.sourceDate || null,
   };
 }
+
+function templateAccess(ledger, template, user) {
+  readable(ledger, user);
+  if (!template || (ledger.ownerUid !== user.uid && template.createdByUid !== user.uid)) throw new Error("只有模板创建者或账本管理员可以管理此模板。");
+}
+function templateData(payload, members, user, timestamp, previous) {
+  const schedule = normalizeSchedule(payload);
+  const shares = consumptionShares(payload);
+  const expense = expenseData({ ...payload, shares, date: today(), receipts: [], sourceTemplateId: null, sourceDate: null }, members, user.uid, timestamp);
+  return { title: expense.title, amountCents: expense.amountCents, payerMemberId: expense.payerMemberId,
+    shares: expense.shares, note: expense.note, items: expense.items, ...schedule,
+    status: previous?.status || "active", createdByUid: previous?.createdByUid || user.uid,
+    createdAt: previous?.createdAt || timestamp, updatedAt: timestamp };
+}
+function requireOccurrence(ledger, template, date, user, record) {
+  templateAccess(ledger, template, user);
+  validateDate(date);
+  if (template.status !== "active" || date > today() || !isScheduledDate(template, date)) throw new Error("这期账单尚未到期或已暂停。");
+  if (record && (record.payerMemberId !== template.payerMemberId || Object.keys(record.shares).some(id => !Object.hasOwn(template.shares, id)))) throw new Error("周期账单的垫付人与参与成员应与模板一致。");
+}
+function occurrenceData(templateId, date, status, expenseId, user, createdAt) {
+  return { templateId, date, status, expenseId, createdByUid: user.uid, createdAt };
+}
+function requireSource(payload) {
+  if (Boolean(payload.sourceTemplateId) !== Boolean(payload.sourceDate)) throw new Error("周期账单来源不完整。");
+  if (payload.sourceTemplateId) occurrenceId(payload.sourceTemplateId, payload.sourceDate);
+}
+
 function paymentData(expenseId, expense, payload, uid, createdAt) {
   const amountCents = assertCents(payload.amountCents);
   const fromMemberId = payload.fromMemberId;
@@ -108,7 +148,7 @@ export function createStore({ mode, firebase = globalThis.firebase, storage = gl
   if (mode === "demo") {
     if (!storage) throw new Error("浏览器不支持本地演示存储。");
     if (!storage.getItem(DEMO_KEY)) storage.setItem(DEMO_KEY, JSON.stringify(seed()));
-    const read = () => JSON.parse(storage.getItem(DEMO_KEY));
+    const read = () => { const state = JSON.parse(storage.getItem(DEMO_KEY)); state.templates ||= {}; state.occurrences ||= {}; return state; };
     const mutate = fn => {
       const state = read();
       const result = fn(state, me(), new Date().toISOString());
@@ -121,7 +161,7 @@ export function createStore({ mode, firebase = globalThis.firebase, storage = gl
       async loadLedger(id) {
         const state = read(), ledger = state.ledgers[id], user = me(); readable(ledger, user);
         const invites = ledger.ownerUid === user.uid ? rows(state.invites).filter(invite => invite.ledgerId === id) : [];
-        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]), payments: rows(state.payments[id]), invites,
+        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]), payments: rows(state.payments[id]), templates: rows(state.templates[id]), occurrences: rows(state.occurrences[id]), invites,
           claims: invites.flatMap(invite => rows(state.claims[invite.id]).map(claim => ({ ...claim, inviteToken: invite.id }))) };
       },
       async createLedger(payload) { return mutate((state, user, createdAt) => {
@@ -139,7 +179,36 @@ export function createStore({ mode, firebase = globalThis.firebase, storage = gl
         const ledger = state.ledgers[id]; readable(ledger, user);
         const data = expenseData(payload, state.members[id], user.uid, createdAt);
         if (ledger.ownerUid !== user.uid && state.members[id][data.payerMemberId].uid !== user.uid) throw new Error("只能记录由自己垫付的费用。");
-        const expenseId = newId(); state.expenses[id][expenseId] = data; return expenseId;
+        requireSource(payload);
+        const expenseId = newId();
+        if (data.sourceTemplateId) {
+          requireOccurrence(ledger, state.templates[id]?.[data.sourceTemplateId], data.sourceDate, user, data);
+          const key = occurrenceId(data.sourceTemplateId, data.sourceDate);
+          state.occurrences[id] ||= {};
+          if (state.occurrences[id][key]) throw new Error("这期账单已经处理，请刷新账本。");
+          state.occurrences[id][key] = occurrenceData(data.sourceTemplateId, data.sourceDate, "posted", expenseId, user, createdAt);
+        }
+        state.expenses[id][expenseId] = data; return expenseId;
+      }); },
+      async saveTemplate(id, payload, templateId) { return mutate((state, user, timestamp) => {
+        const ledger = state.ledgers[id]; readable(ledger, user);
+        state.templates[id] ||= {};
+        const previous = templateId ? state.templates[id][templateId] : null;
+        if (templateId) templateAccess(ledger, previous, user);
+        const record = templateData(payload, state.members[id], user, timestamp, previous);
+        if (ledger.ownerUid !== user.uid && state.members[id][record.payerMemberId].uid !== user.uid) throw new Error("只能记录由自己垫付的费用。");
+        const key = templateId || newId(); state.templates[id][key] = record; return key;
+      }); },
+      async setTemplateStatus(id, templateId, status) { return mutate((state, user, timestamp) => {
+        const template = state.templates[id]?.[templateId]; templateAccess(state.ledgers[id], template, user);
+        if (!["active", "paused", "archived"].includes(status)) throw new Error("模板状态无效。");
+        template.status = status; template.updatedAt = timestamp;
+      }); },
+      async skipOccurrence(id, templateId, date) { return mutate((state, user, timestamp) => {
+        requireOccurrence(state.ledgers[id], state.templates[id]?.[templateId], date, user);
+        state.occurrences[id] ||= {}; const key = occurrenceId(templateId, date);
+        if (state.occurrences[id][key]) throw new Error("这期账单已经处理，请刷新账本。");
+        state.occurrences[id][key] = occurrenceData(templateId, date, "skipped", null, user, timestamp); return key;
       }); },
       async recordPayment(id, payload) { return mutate((state, user, createdAt) => {
         const expense = state.expenses[id]?.[payload.expenseId]; if (!expense) throw new Error("费用不存在。");
@@ -202,10 +271,10 @@ export function createStore({ mode, firebase = globalThis.firebase, storage = gl
     async listLedgers() { return getRows(db.collection("ledgers").where("memberUids", "array-contains", me().uid)); },
     async loadLedger(id) {
       const user = me(), ledger = data(await ledgerRef(id).get()); readable(ledger, user);
-      const [members, expenses, payments] = await Promise.all(["members", "expenses", "payments"].map(name => getRows(ledgerRef(id).collection(name))));
+      const [members, expenses, payments, templates, occurrences, expenseDetails, templateDetails, expenseReceipts] = await Promise.all(["members", "expenses", "payments", "templates", "occurrences", "expenseDetails", "templateDetails", "expenseReceipts"].map(name => getRows(ledgerRef(id).collection(name))));
       const invites = ledger.ownerUid === user.uid ? (await getRows(db.collection("invites").where("ownerUid", "==", user.uid))).filter(invite => invite.ledgerId === id) : [];
       const claims = (await Promise.all(invites.map(async invite => (await getRows(inviteRef(invite.id).collection("claims"))).map(claim => ({ ...claim, inviteToken: invite.id }))))).flat();
-      return { ledger: withId(id, ledger), members, expenses, payments, invites, claims };
+      return { ledger: withId(id, ledger), members, expenses: attachDetails(expenses, expenseDetails, expenseReceipts), payments, templates: attachDetails(templates, templateDetails), occurrences, invites, claims };
     },
     async createLedger(payload) {
       const user = me(), ref = ledgerRef(newId()), currency = text(payload.currency || "CNY", "币种", 3).toUpperCase();
@@ -228,7 +297,49 @@ export function createStore({ mode, firebase = globalThis.firebase, storage = gl
         for (const memberId of memberIds) members[memberId] = data(await tx.get(nested(id, "members", memberId)));
         const record = expenseData(payload, members, user.uid, stamp());
         if (ledger.ownerUid !== user.uid && members[record.payerMemberId].uid !== user.uid) throw new Error("只能记录由自己垫付的费用。");
-        tx.set(ref, record);
+        requireSource(payload);
+        let occurrenceRef;
+        if (record.sourceTemplateId) {
+          const template = data(await tx.get(nested(id, "templates", record.sourceTemplateId)));
+          requireOccurrence(ledger, template, record.sourceDate, user, record);
+          occurrenceRef = nested(id, "occurrences", occurrenceId(record.sourceTemplateId, record.sourceDate));
+          if ((await tx.get(occurrenceRef)).exists) throw new Error("这期账单已经处理，请刷新账本。");
+        }
+        const { base, details, receipts } = splitDetails(record);
+        tx.set(ref, base); tx.set(nested(id, "expenseDetails", ref.id), details);
+        tx.set(nested(id, "expenseReceipts", ref.id), receipts);
+        if (occurrenceRef) tx.set(occurrenceRef, occurrenceData(record.sourceTemplateId, record.sourceDate, "posted", ref.id, user, stamp()));
+      }); return ref.id;
+    },
+    async saveTemplate(id, payload, templateId) {
+      const user = me(), ref = nested(id, "templates", templateId || newId());
+      await db.runTransaction(async tx => {
+        const ledger = data(await tx.get(ledgerRef(id))); readable(ledger, user);
+        const previous = templateId ? data(await tx.get(ref)) : null;
+        if (previous) templateAccess(ledger, previous, user);
+        const members = {};
+        for (const memberId of [...new Set([payload.payerMemberId, ...Object.keys(payload.shares || {})])]) members[memberId] = data(await tx.get(nested(id, "members", memberId)));
+        const record = templateData(payload, members, user, stamp(), previous);
+        if (ledger.ownerUid !== user.uid && members[record.payerMemberId].uid !== user.uid) throw new Error("只能记录由自己垫付的费用。");
+        const { base, details } = splitDetails(record);
+        tx.set(ref, base); tx.set(nested(id, "templateDetails", ref.id), details);
+      }); return ref.id;
+    },
+    async setTemplateStatus(id, templateId, status) {
+      if (!["active", "paused", "archived"].includes(status)) throw new Error("模板状态无效。");
+      const user = me(), ref = nested(id, "templates", templateId);
+      await db.runTransaction(async tx => {
+        const ledger = data(await tx.get(ledgerRef(id))), template = data(await tx.get(ref)); templateAccess(ledger, template, user);
+        tx.update(ref, { status, updatedAt: stamp() });
+      });
+    },
+    async skipOccurrence(id, templateId, date) {
+      const user = me(), ref = nested(id, "occurrences", occurrenceId(templateId, date));
+      await db.runTransaction(async tx => {
+        const ledger = data(await tx.get(ledgerRef(id))), template = data(await tx.get(nested(id, "templates", templateId)));
+        requireOccurrence(ledger, template, date, user);
+        if ((await tx.get(ref)).exists) throw new Error("这期账单已经处理，请刷新账本。");
+        tx.set(ref, occurrenceData(templateId, date, "skipped", null, user, stamp()));
       }); return ref.id;
     },
     async recordPayment(id, payload) {

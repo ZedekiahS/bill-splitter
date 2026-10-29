@@ -32,9 +32,18 @@ They demonstrate the claim and approval flow, not cross-device sharing.
   ledgers clears previous filters so the relevant entries remain visible.
 - Chinese/English interface and settlement statements, with a remembered language
   choice shared by the app and sign-in page. Entered ledger data stays unchanged.
-- Equal, percentage, or exact-amount splits with a preview before saving; the payer can also
+- Equal, percentage, exact-amount, or itemized splits with a preview before saving; the payer can also
   participate. Each expense supports up to **8 people sharing the cost**. This
   limit does not restrict the number of members in a ledger.
+- Reusable expense templates, with optional weekly, monthly, or yearly repeats.
+  Opening or refreshing a ledger generates due drafts; confirmation records the
+  expense once. Skip an occurrence, pause a schedule, or archive/restore a template.
+  Monthly schedules preserve their original day across shorter months. There is
+  no background scheduler or notification service.
+- Up to 8 items per expense, each shared by its selected participants, plus a note
+  of up to 1,000 characters and up to 3 JPG/PNG/WebP/PDF receipts. Images up to
+  10 MB are accepted and compressed locally when needed; stored receipts and
+  PDFs must each fit within 200 KB. Templates reuse items and notes, not receipts.
 - Temporary named members who can later claim their identity through an invite,
   subject to the ledger owner's approval. A matching name never grants access.
 - Partial repayments confirmed by the recipient or ledger owner. Reversals leave
@@ -83,12 +92,15 @@ node tests/bill-calculations.test.mjs
 node tests/ledger-core.test.mjs
 node tests/i18n.test.mjs
 node tests/expense-search.test.mjs
+node tests/expense-features.test.mjs
+node tests/expense-features-store.test.mjs
 ```
 
-All 117 local tests pass: 65 original calculation regressions, 42 shared-ledger
-calculation/storage tests, 6 localization regressions, and 4 expense-search
-regressions. Separate emulator suites cover 32 original permission
-cases and 31 shared-ledger permission cases. See [tests/README.md](tests/README.md)
+All 152 local tests pass: 65 original calculation regressions, 42 shared-ledger
+calculation/storage tests, 7 localization regressions, 4 expense-search
+regressions, 21 recurring/item/attachment checks, and 13 feature-storage checks.
+Separate emulator suites cover 32 original permission cases and 44 shared-ledger
+permission cases. See [tests/README.md](tests/README.md)
 for commands, coverage, and limits. Neither tests nor preview deploy rules or
 modify a live service.
 
