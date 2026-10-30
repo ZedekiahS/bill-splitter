@@ -94,11 +94,12 @@ node tests/i18n.test.mjs
 node tests/expense-search.test.mjs
 node tests/expense-features.test.mjs
 node tests/expense-features-store.test.mjs
+node tests/invitation-navigation.test.mjs
 ```
 
-All 152 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 155 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
-regressions, 21 recurring/item/attachment checks, and 13 feature-storage checks.
+regressions, 21 recurring/item/attachment checks, 13 feature-storage checks, and 3 shared-session UI regressions.
 Separate emulator suites cover 32 original permission cases and 44 shared-ledger
 permission cases. See [tests/README.md](tests/README.md)
 for commands, coverage, and limits. Neither tests nor preview deploy rules or
@@ -107,3 +108,5 @@ modify a live service.
 ## License
 
 See [LICENSE](LICENSE). Existing vendor license headers are preserved in `public/`.
+
+For authenticated two-account browser testing, see [the integration review](docs/review/multi-session.md).

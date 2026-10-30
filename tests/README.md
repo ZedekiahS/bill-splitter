@@ -13,9 +13,10 @@ node tests/i18n.test.mjs
 node tests/expense-search.test.mjs
 node tests/expense-features.test.mjs
 node tests/expense-features-store.test.mjs
+node tests/invitation-navigation.test.mjs
 ```
 
-All 152 local tests pass across these six suites.
+All 155 local tests pass across these seven suites.
 
 | Suite | Cases | Coverage |
 | --- | ---: | --- |
@@ -25,6 +26,7 @@ All 152 local tests pass across these six suites.
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
 | `expense-features.test.mjs` | 21 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
+| `invitation-navigation.test.mjs` | 3 | Actual app refresh/language handlers after approval and stale repayment balance recovery |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to
@@ -132,3 +134,5 @@ clears previous filters. Demo changes stay in this browser's
 local storage. Use a different preview port for disposable review data so that
 the main demo remains clean. Browser checks complement the suites; they do not
 constitute a live cloud rollout.
+
+For authenticated two-account browser testing, see [the integration review](../docs/review/multi-session.md).

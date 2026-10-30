@@ -245,8 +245,18 @@ function showExpense(id) {
 }
 function paymentDialog(expenseId,fromId) {
   const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
-  openDialog(t('确认收到一笔还款'),`<p class="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(e.payerMemberId))}</p><p class="muted">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
-  $('#payment-form').addEventListener('submit',event=>submitForm(event,async data=>{await state.store.recordPayment(state.snapshot.ledger.id,{expenseId,fromMemberId:fromId,amountCents:parseMoney(data.get('amount')),date:data.get('date'),note:data.get('note').trim()});await finishSave(t('已记录本次收款，剩余金额已更新。'));}));
+  openDialog(t('确认收到一笔还款'),`<p class="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(e.payerMemberId))}</p><p class="muted" id="payment-outstanding">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
+  $('#payment-form').addEventListener('submit',event=>submitForm(event,async data=>{
+    const payload={expenseId,fromMemberId:fromId,amountCents:parseMoney(data.get('amount')),date:data.get('date'),note:data.get('note').trim()};
+    try {await state.store.recordPayment(state.snapshot.ledger.id,payload);}
+    catch(error){
+      // Another member may have recorded a receipt while this form was open.
+      // Keep the entered amount and never retry a financial write automatically.
+      try {await refreshSnapshotOnly();const latest=state.snapshot.expenses.find(row=>row.id===expenseId),hint=$('#payment-outstanding');if(latest&&hint)hint.textContent=`${latest.title} · ${t('剩余待收 {amount}',{amount:money(remainingFor(latest,fromId))})}`;}catch{/* Preserve the original write error if refreshing also fails. */}
+      throw error;
+    }
+    await finishSave(t('已记录本次收款，剩余金额已更新。'));
+  }));
 }
 function confirmAction(title,text,buttonLabel,action,success=t('已撤销，原记录和更正记录均已保留。')) {
   openDialog(title,`<p>${text}</p>${errorSlot()}<form id="confirm-form"><div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('返回')}</button><button class="button primary" type="submit">${buttonLabel}</button></div></form>`);
@@ -262,7 +272,11 @@ async function refreshSnapshotOnly(){state.snapshot=await state.store.loadLedger
 async function showInvitation(token) {
   state.invitation=await state.store.getInvite(token);
   const invite=state.invitation;
-  if(invite.status==='accepted'&&invite.acceptedUid===state.store.currentUser.uid){state.inviteAccepted=true;await loadData(invite.ledgerId);toast(t('认领已批准，欢迎加入共同账本。'));return;}
+  if(invite.status==='accepted'&&invite.acceptedUid===state.store.currentUser.uid){
+    state.inviteAccepted=true;state.claimSubmitted=false;params.delete('invite');
+    const url=new URL(location.href);url.searchParams.delete('invite');history.replaceState(null,'',url);
+    await loadData(invite.ledgerId);toast(t('认领已批准，欢迎加入共同账本。'));return;
+  }
   renderInvitation(token);
 }
 function renderInvitation(token) {
@@ -321,7 +335,7 @@ document.addEventListener('click', async event => {
   if(action==='toggle-archived'){state.showArchived=!state.showArchived;render();}
   if(action==='share')shareDialog();
   if(action==='account')accountDialog();
-  if(action==='refresh') {el.disabled=true;try {await loadData();toast(t('账本已刷新。'));}catch(e){toast(errorMessage(e));}finally{el.disabled=false;}}
+  if(action==='refresh') {el.disabled=true;try {if(params.has('invite')&&!state.inviteAccepted)await showInvitation(params.get('invite'));else await loadData();toast(t('账本已刷新。'));}catch(e){toast(errorMessage(e));}finally{el.disabled=false;}}
 });
 async function selectLedger(id) {try {await loadData(id);}catch(error){toast(errorMessage(error));}}
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
