@@ -104,11 +104,13 @@ npm test
 npm run test:api
 ```
 
-All 155 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 161 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
-regressions, 21 recurring/item/attachment checks, 13 feature-storage checks, and 3 shared-session UI regressions.
-The PostgreSQL API suite exercises real authenticated transactions, permissions,
-concurrency and private files. It resets only its dedicated test database.
+regressions, 21 recurring/item/attachment checks, 13 feature-storage checks,
+3 shared-session UI regressions, and 6 API-client retry/error checks.
+The 29 PostgreSQL API tests exercise real authenticated transactions, permissions,
+concurrency and private files, including 16 scenarios through an actual HTTP
+listener. They reset only their dedicated test database and run sequentially.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.
 
@@ -116,4 +118,5 @@ Legacy emulator suites remain for historical regressions. See
 
 See [LICENSE](LICENSE). Existing vendor license headers are preserved in `public/`.
 
-For authenticated two-account browser testing, see [the current integration review](docs/review/self-hosted.md).
+For three-account browser workflows, simulated coordination, failures and coverage
+limits, see [the full acceptance review](docs/review/full-acceptance-2026-10-30.md).

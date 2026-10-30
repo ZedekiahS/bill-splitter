@@ -16,11 +16,11 @@ People sharing expenses. The current implementation targets friends, roommates a
 
 ## Capabilities and Constraints
 
-- Existing HTML/JavaScript app uses Firebase Authentication and Firestore. Preserve existing accounts and old bill records.
-- New review surfaces must work with explicitly labeled sample data without requiring a real login; sample data must not write to the live project.
-- Authentication provider migration and +86/WeChat/QQ login are later work.
+- The HTML/JavaScript frontend uses a self-hosted Node.js API and PostgreSQL, with email/password sessions. Retained Firebase source is inactive; old accounts and records have not been migrated or deleted.
+- Customer-facing previews use the same copy and interaction standards as the product. Explain test environments and verification limits in the conversation or documentation, not in extra UI banners. Isolate synthetic data from real accounts.
+- Email verification/recovery and +86/WeChat/QQ login are later work; unrestricted public registration is not ready.
 - Repayments are recorded confirmations, not payment processing. Opening or copying a message does not mean it was sent.
-- A temporary member is not an authenticated account. Claiming requires an account and ledger-owner approval in cloud mode.
+- A temporary member is not an authenticated account. Shared-ledger claiming requires an account and ledger-owner approval.
 - Money uses integer cents. A ledger has one currency. No cross-currency balance aggregation.
 - No production deployment was requested for this review.
 
@@ -33,4 +33,4 @@ The user permits a new palette suitable for the use case. Future background cust
 - Explain who paid, who participated, and who still owes what.
 - Preserve original financial records; corrections leave a trace.
 - Make the common mobile workflow short and legible.
-- Keep sample data, real account data, and invitation identity states distinguishable.
+- Keep sample and account storage isolated; show only identity and business states needed for the customer's current task.

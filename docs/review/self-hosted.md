@@ -1,5 +1,8 @@
 # Self-hosted backend verification
 
+Follow-up: [full three-account acceptance, 2026-10-30](full-acceptance-2026-10-30.md).
+The results below describe the original migration checkpoint.
+
 Verified 2026-10-29 (local workstation date), Node.js 24.22 / PostgreSQL 18.
 The main application now uses its own API and database, not the retained
 Firebase adapter. No public service was deployed and no Firebase data migrated.

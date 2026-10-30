@@ -11,12 +11,16 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-These tests use real PostgreSQL transactions through Fastify request injection:
+The 29 tests use real PostgreSQL transactions: 13 through Fastify request
+injection and 16 through a loopback HTTP listener with independent session cookies.
+Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment
 races, reversals, private receipts, recurring duplicate prevention and persistence
-across server instances. No Firebase credentials are needed. Browser evidence is
-documented in [the current review](../docs/review/self-hosted.md).
+across server instances, three-account consistency, competing claims, all mutation
+commands against outsiders, currency isolation, input rollback, receipt boundaries,
+and recurring lifecycle/races. No Firebase credentials are needed. Browser evidence
+is documented in [the acceptance review](../docs/review/full-acceptance-2026-10-30.md).
 
 ## Calculation and storage suites
 
@@ -28,9 +32,12 @@ node tests/expense-search.test.mjs
 node tests/expense-features.test.mjs
 node tests/expense-features-store.test.mjs
 node tests/invitation-navigation.test.mjs
+node tests/api-client.test.mjs
 ```
 
-All 155 local tests pass across these seven suites.
+All 161 local tests pass across these eight suites. The API-client suite uses
+controlled fetch failures against the shipped client module; it is not a live
+network test. The PostgreSQL suite and browser review provide that separate layer.
 
 | Suite | Cases | Coverage |
 | --- | ---: | --- |
@@ -41,6 +48,7 @@ All 155 local tests pass across these seven suites.
 | `expense-features.test.mjs` | 21 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
 | `invitation-navigation.test.mjs` | 3 | Actual app refresh/language handlers after approval and stale repayment balance recovery |
+| `api-client.test.mjs` | 6 | Offline/503/lost-response retry keys, rejected inputs, expired login and concurrent duplicates |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to
@@ -96,7 +104,7 @@ are rejected. Do not run concurrent copies against the same project. Fixture
 seeding uses an emulator-only administrative token; access assertions use test
 user tokens or no token. Production credentials and data are not used.
 
-## Permission boundaries
+## Historical Firestore permission boundaries
 
 | Resource | Access and writes |
 | --- | --- |
@@ -151,4 +159,7 @@ local storage. Use a different preview port for disposable review data so that
 the main demo remains clean. Browser checks complement the suites; they do not
 constitute a live cloud rollout.
 
-For authenticated two-account browser testing, see [the integration review](../docs/review/multi-session.md).
+For the current authenticated three-account browser review, see
+[the acceptance report](../docs/review/full-acceptance-2026-10-30.md). It uses the
+real Node/PostgreSQL backend and a dedicated disposable database, not demo mode.
+Start it only after API tests finish; those tests truncate fixture tables.
