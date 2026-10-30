@@ -1,0 +1,10 @@
+process.env.TZ ||= 'Asia/Shanghai';
+const {database}=await import('./database.mjs');
+const {buildApp}=await import('./app.mjs');
+const production=process.env.NODE_ENV==='production',port=Number(process.env.PORT||2801);
+const pool=database(process.env.DATABASE_URL);
+await pool.query('SELECT version FROM bs_schema WHERE version=1');
+const app=await buildApp({pool,production,origins:(process.env.PUBLIC_ORIGINS||`http://127.0.0.1:${port},http://localhost:${port}`).split(',').map(s=>s.trim()),registration:process.env.ALLOW_REGISTRATION!=='false',trustProxy:process.env.TRUST_PROXY||false});
+await app.listen({port,host:process.env.HOST||'127.0.0.1'});
+console.log(`Bill Splitter: http://${process.env.HOST||'127.0.0.1'}:${port}`);
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await app.close();await pool.end();process.exit(0);});

@@ -1,0 +1,20 @@
+{
+  "name": "bill-splitter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/start.mjs",
+    "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs",
+    "test": "node tests/bill-calculations.test.mjs && node tests/ledger-core.test.mjs && node tests/i18n.test.mjs && node tests/expense-search.test.mjs && node tests/expense-features.test.mjs && node tests/expense-features-store.test.mjs && node tests/invitation-navigation.test.mjs",
+    "test:api": "node --env-file-if-exists=.env.test --test tests/api.test.mjs"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.8",
+    "fastify": "^5.12.7",
+    "pg": "^8.23.1"
+  }
+}

@@ -1,3 +1,5 @@
+import { currentSession, createApiStore, signOut } from './api-store.mjs';
+import accountMessages from './account-messages.mjs';
 import { t, getLanguage, setLanguage, translatePage, formatDate, translateError, registerMessages } from './i18n.mjs';
 import messages from './app-messages.mjs';
 import { createStore } from './ledger-store.mjs';
@@ -9,6 +11,7 @@ import featureMessages from './feature-messages.mjs';
 import { bindExpenseSearch } from './expense-search.mjs';
 
 registerMessages(messages);
+registerMessages(accountMessages);
 registerMessages(featureMessages);
 
 const $ = selector => document.querySelector(selector);
@@ -39,7 +42,7 @@ const owner = () => state.snapshot?.ledger.ownerUid === state.store.currentUser.
 const canReceive = expense => owner() || member(expense.payerMemberId)?.uid === state.store.currentUser.uid;
 const activeExpenses = () => state.snapshot.expenses.filter(e => e.status !== 'reversed');
 const outstanding = expense => Object.keys(expense.shares).filter(id => id !== expense.payerMemberId).reduce((n,id) => n + remainingFor(expense,id),0);
-const localDate = () => {const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+const localDate = () => {if(!demo)return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const amountText = cents => `${Math.floor(cents/100)}.${String(cents%100).padStart(2,'0')}`;
 const avatar = (name, cls='') => `<span class="avatar ${cls}" aria-hidden="true">${escape(Array.from(name || '?')[0])}</span>`;
 const dateText = date => formatDate(date);
@@ -55,12 +58,6 @@ function empty(title, text, action='') { return `<div class="empty-state">${icon
 function heading(title, subtitle, actions='') {return `<div class="page-heading"><div class="heading-copy"><h1>${title}</h1><p>${subtitle}</p></div><div class="page-actions">${actions}</div></div>`;}
 const newExpenseButton = () => `<button class="button primary" data-action="new-expense">${icon('plus')}${t('记一笔')}</button>`;
 
-async function loadFirebase() {
-  for (const src of ['/__/firebase/7.18.0/firebase-app.js','/__/firebase/7.18.0/firebase-auth.js','/__/firebase/7.18.0/firebase-firestore.js','/__/firebase/init.js']) {
-    await new Promise((resolve,reject) => {const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error('暂时无法连接账号服务。'));document.head.append(s);});
-  }
-  return new Promise(resolve => {const stop=globalThis.firebase.auth().onAuthStateChanged(user=>{stop();resolve(user);});});
-}
 async function start() {
   $('.brand').href=demo?'app.html?demo=1':'app.html';
   const accountButton=document.createElement('button');
@@ -68,10 +65,10 @@ async function start() {
   $('.topbar-actions').append(accountButton);
   try {
     let user;
-    if (!demo) user = await loadFirebase();
+    if (!demo) ({user} = await currentSession());
     if (!demo && !user) { showSignIn(); return; }
     const visitor = demo && params.has('invite') ? {uid:'demo-guest',displayName:t('新成员')} : undefined;
-    state.store = createStore({mode:demo?'demo':'cloud',user:visitor});
+    state.store = demo ? createStore({mode:'demo',user:visitor}) : createApiStore(user);
     $('#account-name').textContent=state.store.currentUser.displayName || t('我的账号');
     $('.avatar-self').textContent=Array.from(state.store.currentUser.displayName || t('我'))[0];
     if (params.has('invite')) {await showInvitation(params.get('invite'));return;}
@@ -83,6 +80,8 @@ function showStartupError() {
   $('#main-content').innerHTML=empty(t('暂时无法打开账本'), errorMessage(state.startupError), `<a class="button primary" href="app.html?demo=1">${t('试用账本')}</a><a class="button secondary" href="index.html">${t('返回登录')}</a>`);
 }
 function showSignIn() {
+  $('#account-name').textContent=t('未登录');
+  $('.avatar-self').textContent='?';
   $('#main-content').innerHTML=empty(t('登录后，继续你的账本'),t('账号登录后可访问共享账本和提交成员认领。'),`<a class="button primary" href="index.html?next=${encodeURIComponent(location.pathname+location.search)}">${t('登录账号')}</a><a class="button secondary" href="app.html?demo=1">${t('先试用')}</a>`);
 }
 async function loadData(preferredId) {
@@ -232,7 +231,7 @@ function newExpense(options={}) {
 function expenseExtras(expense) {
   const items=expense.items || [],receipts=expense.receipts || [],urls=[];
   const attachments=receipts.map(receipt=>{
-    try {const url=URL.createObjectURL(receiptBlob(receipt));urls.push(url);return `<a class="receipt-row" href="${url}" download="${escape(receipt.name)}">${receipt.type.startsWith('image/')?`<img src="${url}" alt="${escape(receipt.name)}">`:icon('receipt')}<span>${escape(receipt.name)}<small>${t('下载收据')}</small></span></a>`;}
+    try {const url=typeof receipt.url==='string'&&/^\/api\/ledgers\/[a-f0-9-]+\/receipts\/[a-f0-9-]+$/.test(receipt.url)?receipt.url:URL.createObjectURL(receiptBlob(receipt));if(url.startsWith('blob:'))urls.push(url);return `<a class="receipt-row" href="${url}" download="${escape(receipt.name)}">${receipt.type.startsWith('image/')?`<img src="${url}" alt="${escape(receipt.name)}">`:icon('receipt')}<span>${escape(receipt.name)}<small>${t('下载收据')}</small></span></a>`;}
     catch{return `<p class="form-hint">${escape(receipt.name)} · ${t('收据文件无效，无法打开。')}</p>`;}
   }).join('');
   if(urls.length)$('#action-dialog').addEventListener('close',()=>urls.forEach(url=>URL.revokeObjectURL(url)),{once:true});
@@ -298,8 +297,12 @@ function shareDialog() {
 
 function accountDialog() {
   if(!state.store){showSignIn();return;}
-  openDialog(t('我的账号'),`<p>${demo?t('登录后，可以用自己的账号加入共同账本。'):t('已登录：{account}', {account:escape(state.store.currentUser.email || state.store.currentUser.displayName || t('我的账号'))})}</p><div class="form-actions">${demo?`<a class="button primary" href="index.html">${t('登录账号')}</a>`:`<a class="button secondary" href="history.html">${t('查看原有独立账单')}</a><button class="button primary" id="sign-out">${t('退出登录')}</button>`}</div>`);
-  $('#sign-out')?.addEventListener('click',async()=>{await globalThis.firebase.auth().signOut();location.href='index.html';});
+  openDialog(t('我的账号'),`<p>${demo?t('登录后，可以用自己的账号加入共同账本。'):t('已登录：{account}', {account:escape(state.store.currentUser.email || state.store.currentUser.displayName || t('我的账号'))})}</p><div class="form-actions">${demo?`<a class="button primary" href="index.html">${t('登录账号')}</a>`:`<button class="button primary" id="sign-out">${t('退出登录')}</button>`}</div>`);
+  $('#sign-out')?.addEventListener('click',async event=>{
+    const button=event.currentTarget;button.disabled=true;
+    try{await signOut();location.href='index.html';}
+    catch(error){formError(errorMessage(error));button.disabled=false;}
+  });
 }
 
 document.addEventListener('click', async event => {

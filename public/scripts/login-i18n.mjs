@@ -1,7 +1,9 @@
 import { t, getLanguage, setLanguage, registerMessages, translatePage } from './i18n.mjs';
 import { loginMessages, authErrorSource } from './login-messages.mjs';
+import accountMessages from './account-messages.mjs';
 
 registerMessages(loginMessages);
+registerMessages(accountMessages);
 window.billSplitterLogin = { t, authError: authErrorSource };
 
 const picker = document.querySelector('#language-picker');

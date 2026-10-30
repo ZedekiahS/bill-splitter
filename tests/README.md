@@ -1,8 +1,22 @@
 # Bill Splitter tests
 
-Run commands from the repository directory with Node 20+. Calculation suites use
+Run commands from the repository directory with Node 22+. Calculation suites use
 the shipped application modules with lightweight stubs or isolated storage; no
 login, npm test dependencies, emulator, or network is needed.
+
+## Current PostgreSQL API suite
+
+Run `npm ci`. Set `TEST_DATABASE_URL` in ignored `.env.test` to a dedicated,
+local database ending in `_test`, then run `npm run test:api`. The suite migrates
+and **truncates fixture tables** in that database. Non-loopback hosts and other
+database names are rejected. Always use a disposable test database.
+
+These tests use real PostgreSQL transactions through Fastify request injection:
+registration, session revocation, CSRF, request limits, authenticated ownership,
+invitation approval, payer restrictions, concurrent idempotent writes, overpayment
+races, reversals, private receipts, recurring duplicate prevention and persistence
+across server instances. No Firebase credentials are needed. Browser evidence is
+documented in [the current review](../docs/review/self-hosted.md).
 
 ## Calculation and storage suites
 
@@ -39,7 +53,9 @@ Original bill dates use UTC-midnight timestamps. New ledger dates use validated
 `YYYY-MM-DD` strings, checked as UTC calendar days to avoid timezone shifts.
 These suites establish client behavior, not production permissions.
 
-## Firestore emulator suites
+## Historical Firestore emulator suites
+
+These cover retained Firebase source, not the active Node/PostgreSQL API.
 
 Install Firebase CLI and a compatible Java runtime. The local test configuration
 binds Firestore to `127.0.0.1:8280`. Run the suites separately:

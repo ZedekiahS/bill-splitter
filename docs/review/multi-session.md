@@ -1,5 +1,7 @@
 # Two-account browser integration review
 
+> Historical Firebase-emulator review. The active backend is now PostgreSQL; see [current verification](self-hosted.md).
+
 Verified on 2026-10-29 using the application UI and its cloud store adapter.
 Alice and Bob signed in with separate browser origins (ports 2804 and 2805),
 sharing one local Firebase Authentication and Firestore emulator project. These

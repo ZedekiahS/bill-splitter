@@ -1,0 +1,5 @@
+# Native app listens on loopback. Set APP_DOMAIN to the real domain.
+{$APP_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:2801
+}

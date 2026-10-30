@@ -12,7 +12,7 @@ function fixture(status) {
   const context = vm.createContext({URL, URLSearchParams, location,
     history:{replaceState(_state,_title,url){location.href=String(url);}},
     document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
-    window:{addEventListener(){}},registerMessages(){},messages:{},featureMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
+    window:{addEventListener(){}},registerMessages(){},messages:{},featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
     calls,parseMoney,formatMoney,remainingFor,
   });
   vm.runInContext(source,context);

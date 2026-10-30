@@ -1,3 +1,4 @@
+import accountMessages from '../public/scripts/account-messages.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -68,7 +69,7 @@ test('English settlement export preserves names, expense titles, cents and input
 
 test('all shared-ledger source messages and login labels have English translations', async () => {
   const { default: appMessages } = await import('../public/scripts/app-messages.mjs');
-  registerMessages(appMessages);
+  registerMessages(appMessages);registerMessages(accountMessages);
   setLanguage('en');
   const sources = await Promise.all(['app.mjs', 'expense-entry.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
   const keys = sources.flatMap(source => [...source.matchAll(/\bt\((['"])(.*?)\1/g)].map(match => match[2]));
@@ -92,7 +93,7 @@ test('item, receipt and recurring-expense errors retain actionable English messa
     assert.doesNotMatch(translateError(new Error(source)), /[\u4e00-\u9fff]/);
   }
   assert.equal(t('移除收据 {name}', { name: '收据 {name}.pdf' }), 'Remove receipt 收据 {name}.pdf');
-  const sources = await Promise.all(['expense-entry.mjs', 'expense-features.mjs', 'receipt-files.mjs', 'ledger-store.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const sources = await Promise.all(['expense-entry.mjs', 'expense-features.mjs', 'receipt-files.mjs', 'ledger-store.mjs', 'ledger-domain.mjs', 'api-store.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
   const errors = [...new Set(sources.flatMap(source => [...source.matchAll(/\bError\((['"])(.*?)\1/g)].map(match => match[2])))];
   const internal = new Set(['请明确选择 demo 或 cloud 模式。', '浏览器不支持本地演示存储。', 'Firebase 尚未配置，请使用演示模式或配置真实服务。']);
   assert.deepEqual(errors.filter(source => !internal.has(source) && /[\u4e00-\u9fff]/.test(t(source))), []);

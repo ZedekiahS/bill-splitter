@@ -5,17 +5,29 @@ standalone repository preserves the original CSSE280 project and its vendor
 license notices, with a new shared-ledger interface built in HTML, CSS, and
 JavaScript.
 
-## Try the updated app
+## Run the application
 
-Run from the repository directory with Node 20+:
+The frontend now uses a self-hosted Node.js API and PostgreSQL. Normal account
+and shared-ledger operation does not require Firebase, Rosefire or Google SDKs.
+Use Node.js 22+ and a dedicated PostgreSQL database (validated on Node 24 / PostgreSQL 18):
 
 ```powershell
-node scripts/preview.mjs
+npm ci
+# Copy .env.example to .env and configure DATABASE_URL / PUBLIC_ORIGINS.
+npm run db:migrate
+npm start
 ```
 
-Open [the local demo](http://127.0.0.1:2801/app.html?demo=1). No login, package
-installation, or Firebase connection is needed for this mode. The server binds
-only to the local computer. Set `BILL_SPLITTER_PORT` to choose another port.
+Open [Bill Splitter](http://127.0.0.1:2801/index.html) and register with a name,
+email and password. Email is currently an unverified login identifier; email
+verification and password recovery are required before unrestricted public
+registration. WeChat, QQ and phone login are deferred. See [deployment and backup
+instructions](docs/self-hosting.md). No public deployment or old account migration
+is performed by updating this repository.
+
+The optional [local experience](http://127.0.0.1:2801/app.html?demo=1) is independent
+of registered accounts. `node scripts/preview.mjs` is retained only for frontend
+review and cannot serve the new API.
 
 The demo starts with illustrative roommate, trip, and dinner ledgers. Changes
 persist in this browser's `localStorage` under
@@ -56,30 +68,29 @@ Amounts use integer cents. Percentage inputs support two decimal places;
 unassigned percentages are covered by the payer and rounding preserves the
 assigned total. Ledgers never combine balances across currencies.
 
-## Accounts and cloud data
+## Accounts and shared data
 
-`app.html` without `?demo=1` uses Firebase Authentication and Cloud Firestore.
-The login page retains email/password and the existing Rosefire entry for old
-accounts. Authentication migration, +86 phone, WeChat, and QQ login are deferred.
-The new interface's account menu provides **查看原有独立账单** for the original
-bill history; existing bills have not been migrated into shared ledgers.
+The API uses opaque, revocable HttpOnly session cookies and scrypt password
+hashes. Server-side checks enforce membership, invitation approval, payer and
+recipient permissions, and split arithmetic. PostgreSQL ledger-row transactions
+and idempotency keys protect concurrent writes. Receipts are private downloads
+available only to members, stored with the database for consistent backup.
 
-The local preview redirects `/__/firebase/` SDK/config requests to the original
-`shex-billsplitter.web.app` host. Consequently, signing into cloud mode can use
-real account data; it is not an emulator. The included `.firebaserc` also records
-the original project association. Configure your own project and Firebase
-Hosting environment before making a separate deployment.
-
-The shared-ledger cloud adapter and security rules are implemented, but **the new
-rules have not been deployed**. Local tests do not establish a production rollout
-or a live-account end-to-end test. The working demo is the review entry point.
+Stable internal user IDs are separate from login identities. No automatic
+name/email merging occurs. The old Firebase adapter and rules remain historical
+source; current login and API do not use them. Old HTML pages are unavailable
+through the new server, and existing data has not been converted automatically.
 
 ## Project layout
 
 - `public/app.html`, `public/scripts/app.mjs`, `public/styles/app.css`: new UI.
 - `public/scripts/ledger-core.mjs`: money, shares, balances, and settlement text.
-- `public/scripts/ledger-store.mjs`: isolated demo storage and Firebase adapter.
-- `public/index.html`: account login; the original bill pages remain in `public/`.
+- `public/scripts/ledger-domain.mjs`: shared server/local business rules.
+- `public/scripts/api-store.mjs`, `login.mjs`: same-origin API and session login.
+- `server/`: authentication, PostgreSQL transactions, API, schema and entry point.
+- `Dockerfile`, `deploy/`: production packaging and reverse-proxy example.
+- `public/scripts/ledger-store.mjs`: local storage and retained legacy adapter.
+- `public/index.html`: account login.
 - `firestore.rules`: original profiles/bills plus shared ledgers and invitations.
 - `scripts/preview.mjs`: dependency-free local preview server.
 - `tests/`, `firebase.test.json`: calculations and isolated emulator tests.
@@ -88,25 +99,21 @@ or a live-account end-to-end test. The working demo is the review entry point.
 ## Tests
 
 ```powershell
-node tests/bill-calculations.test.mjs
-node tests/ledger-core.test.mjs
-node tests/i18n.test.mjs
-node tests/expense-search.test.mjs
-node tests/expense-features.test.mjs
-node tests/expense-features-store.test.mjs
-node tests/invitation-navigation.test.mjs
+npm test
+# Set TEST_DATABASE_URL in .env.test to a disposable local database ending _test.
+npm run test:api
 ```
 
 All 155 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
 regressions, 21 recurring/item/attachment checks, 13 feature-storage checks, and 3 shared-session UI regressions.
-Separate emulator suites cover 32 original permission cases and 44 shared-ledger
-permission cases. See [tests/README.md](tests/README.md)
-for commands, coverage, and limits. Neither tests nor preview deploy rules or
-modify a live service.
+The PostgreSQL API suite exercises real authenticated transactions, permissions,
+concurrency and private files. It resets only its dedicated test database.
+Legacy emulator suites remain for historical regressions. See
+[tests/README.md](tests/README.md) for commands, coverage and limits.
 
 ## License
 
 See [LICENSE](LICENSE). Existing vendor license headers are preserved in `public/`.
 
-For authenticated two-account browser testing, see [the integration review](docs/review/multi-session.md).
+For authenticated two-account browser testing, see [the current integration review](docs/review/self-hosted.md).
