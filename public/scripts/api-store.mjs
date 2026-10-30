@@ -9,7 +9,7 @@ export async function apiRequest(path,{method='GET',body}={}){
     headers['Idempotency-Key']=pending.get(signature);
   }
   let response;
-  try {response=await fetch(path,{method,headers,body:content,credentials:'same-origin',cache:'no-store'});}
+  try {response=await fetch(path,{method,headers,body:content,credentials:'same-origin',cache:'no-store',...(method==='GET'?{signal:AbortSignal.timeout(15000)}:{})});}
   catch {throw new Error('网络连接失败，请检查网络后重试。');}
   let result;
   try {result=await response.json();}catch{throw new Error('服务暂时不可用，请稍后重试。');}
@@ -24,6 +24,7 @@ export const signOut=()=>apiRequest('/api/auth/logout',{method:'POST',body:{}});
 export function createApiStore(user){
   const post=(path,body)=>apiRequest(path,{method:'POST',body});
   const store={currentUser:user,mode:'api',listLedgers:()=>apiRequest('/api/ledgers'),loadLedger:id=>apiRequest(`/api/ledgers/${encodeURIComponent(id)}`),createLedger:payload=>post('/api/ledgers',payload),getInvite:token=>apiRequest(`/api/invites/${encodeURIComponent(token)}`),claimInvite:(token,payload)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'claim',...payload}),approveClaim:(token,uid)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'approve',uid})};
+  store.listUpdates=()=>apiRequest('/api/ledger-updates');
   for(const type of ['addMember','addExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']){
     store[type]=(id,...args)=>post(`/api/ledgers/${encodeURIComponent(id)}/commands`,{type,args});
   }

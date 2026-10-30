@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS bs_ledgers (
   id uuid PRIMARY KEY, owner_id uuid NOT NULL REFERENCES bs_users(id), body jsonb NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE bs_ledgers ADD COLUMN IF NOT EXISTS revision bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS bs_memberships (
   ledger_id uuid NOT NULL REFERENCES bs_ledgers(id), user_id uuid NOT NULL REFERENCES bs_users(id),
   PRIMARY KEY(ledger_id,user_id)

@@ -25,7 +25,7 @@ export function ledgerService(pool){
         expense.receipts[index]={id:receiptId,name:file.name,type:file.type,size:bytes.length,url:`/api/ledgers/${ledgerId}/receipts/${receiptId}`};
       }
     }
-    await client.query('UPDATE bs_ledgers SET body=$2,updated_at=now() WHERE id=$1',[ledgerId,state]);
+    await client.query('UPDATE bs_ledgers SET body=$2,updated_at=now(),revision=revision+1 WHERE id=$1',[ledgerId,state]);
     for(const uid of state.ledgers[ledgerId].memberUids)await client.query('INSERT INTO bs_memberships(ledger_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[ledgerId,uid]);
     for(const token of Object.keys(state.invites))await client.query('INSERT INTO bs_invites(id,ledger_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[token,ledgerId]);
   }
@@ -42,6 +42,7 @@ export function ledgerService(pool){
   async function write(user,key,route,body,action){return transaction(pool,client=>once(client,user,key,hash(JSON.stringify([route,body])),()=>action(client)));}
   async function inviteLedger(client,token){id(token);const {rows}=await client.query('SELECT ledger_id FROM bs_invites WHERE id=$1',[token]);if(!rows.length)throw new HttpError(404,'邀请已失效、过期或被认领。');return rows[0].ledger_id;}
   return {
+    async updates(user){const {rows}=await pool.query('SELECT l.id,l.revision::text AS revision FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.id',[user.uid]);return rows;},
     async list(user){const {rows}=await pool.query('SELECT l.id,l.body->\'ledgers\'->l.id::text AS ledger FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.updated_at DESC',[user.uid]);return rows.map(row=>({...row.ledger,id:row.id}));},
     async get(user,ledgerId){const state=await load(pool,ledgerId,user);return engine(state,user).loadLedger(ledgerId);},
     async create(user,payload,key){return write(user,key,'create',payload,async client=>{

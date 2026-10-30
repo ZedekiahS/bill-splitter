@@ -11,8 +11,8 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 29 tests use real PostgreSQL transactions: 13 through Fastify request
-injection and 16 through a loopback HTTP listener with independent session cookies.
+The 30 tests use real PostgreSQL transactions: 13 through Fastify request
+injection and 17 through a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment
@@ -33,9 +33,10 @@ node tests/expense-features.test.mjs
 node tests/expense-features-store.test.mjs
 node tests/invitation-navigation.test.mjs
 node tests/api-client.test.mjs
+node tests/auto-sync.test.mjs
 ```
 
-All 161 local tests pass across these eight suites. The API-client suite uses
+All 170 local tests pass across these nine suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -47,8 +48,9 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
 | `expense-features.test.mjs` | 21 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
-| `invitation-navigation.test.mjs` | 3 | Actual app refresh/language handlers after approval and stale repayment balance recovery |
+| `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
 | `api-client.test.mjs` | 6 | Offline/503/lost-response retry keys, rejected inputs, expired login and concurrent duplicates |
+| `auto-sync.test.mjs` | 5 | Single-flight scheduling, hidden pages, network backoff/recovery, expired session and page lifecycle |
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to

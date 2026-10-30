@@ -39,6 +39,10 @@ They demonstrate the claim and approval flow, not cross-device sharing.
 
 - Separate ledgers for groups or activities, each using CNY or USD.
 - Overview, searchable expense list, settlements, and member management.
+- Shared ledgers update automatically while the page is visible, checking revisions
+  about every three seconds and fetching data only when something changes. Returning
+  to the page or reconnecting checks immediately. Input drafts are preserved; open
+  repayment balances, expense details and settlement statements update as well.
 - Expense search supports Chinese text composition and shows matching results.
   Empty results offer a clear-filter action; saving an expense or switching
   ledgers clears previous filters so the relevant entries remain visible.
@@ -104,12 +108,13 @@ npm test
 npm run test:api
 ```
 
-All 161 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 170 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
 regressions, 21 recurring/item/attachment checks, 13 feature-storage checks,
-3 shared-session UI regressions, and 6 API-client retry/error checks.
-The 29 PostgreSQL API tests exercise real authenticated transactions, permissions,
-concurrency and private files, including 16 scenarios through an actual HTTP
+7 shared-session UI regressions, 6 API-client retry/error checks, and 5 automatic
+synchronization scheduling checks.
+The 30 PostgreSQL API tests exercise real authenticated transactions, permissions,
+concurrency and private files, including 17 scenarios through an actual HTTP
 listener. They reset only their dedicated test database and run sequentially.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.
@@ -120,3 +125,4 @@ See [LICENSE](LICENSE). Existing vendor license headers are preserved in `public
 
 For three-account browser workflows, simulated coordination, failures and coverage
 limits, see [the full acceptance review](docs/review/full-acceptance-2026-10-30.md).
+Automatic synchronization is covered in [the follow-up review](docs/review/auto-sync-2026-10-30.md).

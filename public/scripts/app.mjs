@@ -9,6 +9,7 @@ import { dueOccurrences } from './expense-features.mjs';
 import { receiptBlob } from './receipt-files.mjs';
 import featureMessages from './feature-messages.mjs';
 import { bindExpenseSearch } from './expense-search.mjs';
+import { createAutoSync } from './auto-sync.mjs';
 
 registerMessages(messages);
 registerMessages(accountMessages);
@@ -19,6 +20,7 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp
 const params = new URLSearchParams(location.search);
 const demo = params.get('demo') === '1';
 const state = { store: null, ledgers: [], snapshot: null, view: location.hash.slice(1) || 'overview', filter: 'all', search: '', expenseTab:'records', showArchived:false, starting: true, startupError: null, invitation: null, claimSubmitted: false };
+let dataGeneration=0,loadingData=0,saving=0,syncSignature=null,autoSync=null,dialogRefresh=null;
 const views = [{id:'overview',name:'总览',icon:'home'},{id:'expenses',name:'账单',icon:'receipt'},{id:'settlements',name:'结算',icon:'arrows'},{id:'members',name:'成员',icon:'people'}];
 const paths = {
   home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9',
@@ -74,7 +76,7 @@ async function start() {
     if (params.has('invite')) {await showInvitation(params.get('invite'));return;}
     await loadData();
   } catch(error) {state.startupError=error;showStartupError();}
-  finally {state.starting=false;}
+  finally {state.starting=false;if(state.store?.mode==='api')startAutoSync();}
 }
 function showStartupError() {
   $('#main-content').innerHTML=empty(t('暂时无法打开账本'), errorMessage(state.startupError), `<a class="button primary" href="app.html?demo=1">${t('试用账本')}</a><a class="button secondary" href="index.html">${t('返回登录')}</a>`);
@@ -85,13 +87,55 @@ function showSignIn() {
   $('#main-content').innerHTML=empty(t('登录后，继续你的账本'),t('账号登录后可访问共享账本和提交成员认领。'),`<a class="button primary" href="index.html?next=${encodeURIComponent(location.pathname+location.search)}">${t('登录账号')}</a><a class="button secondary" href="app.html?demo=1">${t('先试用')}</a>`);
 }
 async function loadData(preferredId) {
+  const generation=++dataGeneration;loadingData++;
+  try {
   const oldId=state.snapshot?.ledger.id;
-  state.ledgers=await state.store.listLedgers();
-  const id=[preferredId,oldId,params.get('ledger'),state.ledgers[0]?.id].find(id=>state.ledgers.some(l=>l.id===id));
-  state.snapshot=id?await state.store.loadLedger(id):null;
+  const ledgers=await state.store.listLedgers();
+  const id=[preferredId,oldId,params.get('ledger'),ledgers[0]?.id].find(id=>ledgers.some(l=>l.id===id));
+  const snapshot=id?await state.store.loadLedger(id):null;
+  if(generation!==dataGeneration)return;
+  state.ledgers=ledgers;state.snapshot=snapshot;
   if(id!==oldId){state.search='';state.filter='all';state.expenseTab='records';state.showArchived=false;}
   state.startupError=null;render();
   if(id){const url=new URL(location.href);url.searchParams.set('ledger',id);url.hash=state.view;history.replaceState(null,'',url);}
+  } finally {loadingData=Math.max(0,loadingData-1);}
+}
+function syncBlocked(){return state.starting||loadingData||saving||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker'));}
+async function syncChanges(){
+  if(!state.store||syncBlocked())return;
+  const generation=dataGeneration,store=state.store;
+  const valid=()=>generation===dataGeneration&&store===state.store&&!syncBlocked();
+  const updates=await store.listUpdates(),signature=JSON.stringify(updates);
+  if(!valid()||signature===syncSignature)return;
+  // Claim approval grants membership and therefore changes this user's update list.
+  if(params.has('invite')&&!state.inviteAccepted){
+    const invite=await store.getInvite(params.get('invite'));
+    if(!valid())return;
+    if(invite.status==='accepted'&&invite.acceptedUid===store.currentUser.uid)await showInvitation(params.get('invite'));
+    syncSignature=signature;return;
+  }
+  const ledgers=await store.listLedgers(),oldId=state.snapshot?.ledger.id;
+  const id=[oldId,params.get('ledger'),ledgers[0]?.id].find(id=>ledgers.some(row=>row.id===id));
+  const snapshot=id?await store.loadLedger(id):null;
+  if(!valid())return;
+  const changed=Boolean(state.startupError)||JSON.stringify([state.ledgers,state.snapshot])!==JSON.stringify([ledgers,snapshot]);
+  state.ledgers=ledgers;state.snapshot=snapshot;syncSignature=signature;state.startupError=null;
+  if(!changed)return;
+  if(id!==oldId){closeDialog();state.search='';state.filter='all';state.expenseTab='records';state.showArchived=false;}
+  const scrollY=window.scrollY;
+  render();
+  if($('#action-dialog').open)dialogRefresh?.();
+  window.scrollTo({top:scrollY,behavior:'instant'});
+  const url=new URL(location.href);if(id)url.searchParams.set('ledger',id);else url.searchParams.delete('ledger');history.replaceState(null,'',url);
+}
+function clearSession(){
+  ++dataGeneration;loadingData=0;autoSync?.stop();closeDialog();
+  state.store=null;state.snapshot=null;state.ledgers=[];state.invitation=null;
+  for(const selector of ['#primary-nav','#mobile-nav','#ledger-nav','#ledger-picker'])$(selector).innerHTML='';
+  showSignIn();
+}
+function startAutoSync(){
+  autoSync??=createAutoSync({check:syncChanges,onUnauthorized:clearSession});autoSync.start();
 }
 function render() {
   const nav = views.map(v=>`<button class="nav-item ${state.view===v.id?'active':''}" data-view="${v.id}" ${state.view===v.id?'aria-current="page"':''}>${icon(v.icon)}<span>${t(v.name)}</span></button>`).join('');
@@ -191,6 +235,7 @@ function membersView() {
 }
 
 function openDialog(title,body,footer='',wide=false) {
+  dialogRefresh=null;
   const d=$('#action-dialog'); d.classList.toggle('wide-dialog',wide);
   $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
@@ -207,7 +252,8 @@ async function submitForm(event, action) {
   event.preventDefault();const button=event.target.querySelector('[type="submit"]');if(button?.disabled)return;
   const languagePicker=$('#language-picker'), languageWasDisabled=languagePicker.disabled;languagePicker.disabled=true;
   if(button){button.disabled=true;button.dataset.label=button.textContent;button.textContent=t('正在保存…');}
-  try {await action(new FormData(event.target));}catch(e){formError(errorMessage(e));}finally{languagePicker.disabled=languageWasDisabled;if(button){button.disabled=false;button.textContent=button.dataset.label;}}
+  saving++;++dataGeneration;
+  try {await action(new FormData(event.target));}catch(e){formError(errorMessage(e));}finally{saving--;autoSync?.wake();languagePicker.disabled=languageWasDisabled;if(button){button.disabled=false;button.textContent=button.dataset.label;}}
 }
 function newLedger() {
   if(!state.store){showSignIn();return;}
@@ -241,10 +287,12 @@ function showExpense(id) {
   const e=state.snapshot.expenses.find(e=>e.id===id);if(!e)return;
   const shares=Object.entries(consumptionShares(e)).map(([id,cents])=>{const isPayer=id===e.payerMemberId,remaining=remainingFor(e,id),paid=e.repaid?.[id]||0;return `<div class="member-row">${avatar(memberName(id))}<div class="member-info"><strong>${escape(memberName(id))}${isPayer?t(' · 垫付人'):''}</strong><small>${isPayer?t('自己的消费份额'):paid?`${t('已还')} ${money(paid)}`:t('尚未还款')}</small></div><div class="expense-amount"><strong>${money(cents)}</strong><small>${isPayer?t('自付'):`${t('待付')} ${money(remaining)}`}</small></div>${!isPayer&&remaining>0&&e.status==='active'&&canReceive(e)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(id)}">${t('收款')}</button>`:''}</div>`;}).join('');
   openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>${e.status==='active'&&(owner()||e.createdByUid===state.store.currentUser.uid)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
+  dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showExpense(id);$('.dialog-body').scrollTop=top;};
 }
 function paymentDialog(expenseId,fromId) {
   const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
   openDialog(t('确认收到一笔还款'),`<p class="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(e.payerMemberId))}</p><p class="muted" id="payment-outstanding">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
+  dialogRefresh=()=>{const latest=state.snapshot.expenses.find(row=>row.id===expenseId);if(latest)$('#payment-outstanding').textContent=`${latest.title} · ${t('剩余待收 {amount}',{amount:money(latest.status==='reversed'?0:remainingFor(latest,fromId))})}`;};
   $('#payment-form').addEventListener('submit',event=>submitForm(event,async data=>{
     const payload={expenseId,fromMemberId:fromId,amountCents:parseMoney(data.get('amount')),date:data.get('date'),note:data.get('note').trim()};
     try {await state.store.recordPayment(state.snapshot.ledger.id,payload);}
@@ -267,7 +315,7 @@ async function invitationDialog(memberId) {
     $('#copy-invite').addEventListener('click',()=>copyText(url.href,t('邀请链接已复制，请自行发给本人。')));await refreshSnapshotOnly();
   }catch(e){toast(errorMessage(e));}
 }
-async function refreshSnapshotOnly(){state.snapshot=await state.store.loadLedger(state.snapshot.ledger.id);}
+async function refreshSnapshotOnly(){const generation=++dataGeneration;loadingData++;try{const snapshot=await state.store.loadLedger(state.snapshot.ledger.id);if(generation===dataGeneration)state.snapshot=snapshot;}finally{loadingData=Math.max(0,loadingData-1);}}
 async function showInvitation(token) {
   state.invitation=await state.store.getInvite(token);
   const invite=state.invitation;
@@ -291,8 +339,9 @@ async function copyText(text, success=t('已复制。')) {
 function shareDialog() {
   const text=settlementText(state.snapshot, getLanguage());
   openDialog(t('分享前，先看一眼'),`<p class="muted">${t('结算单包含本账本成员姓名和金额。确认分享范围后，再发给你的伙伴。')}</p><label class="sr-only" for="statement-text">${t('结算单内容')}</label><textarea class="statement" id="statement-text" readonly rows="13">${escape(text)}</textarea>${errorSlot()}<div class="form-actions"><button class="button secondary" id="download-statement">${t('下载文本')}</button><button class="button primary" id="copy-statement">${t('复制结算单')}</button></div>`);
-  $('#copy-statement').addEventListener('click',()=>copyText(text,t('结算单已复制，可以粘贴到聊天中。')));
-  $('#download-statement').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`${state.snapshot.ledger.title.replace(/[\\/:*?"<>|]/g,'-')}${t('-结算单.txt')}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t('结算单已下载。'));});
+  dialogRefresh=()=>{$('#statement-text').value=settlementText(state.snapshot,getLanguage());};
+  $('#copy-statement').addEventListener('click',()=>copyText($('#statement-text').value,t('结算单已复制，可以粘贴到聊天中。')));
+  $('#download-statement').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([$('#statement-text').value],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`${state.snapshot.ledger.title.replace(/[\\/:*?"<>|]/g,'-')}${t('-结算单.txt')}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t('结算单已下载。'));});
 }
 
 function accountDialog() {
@@ -300,8 +349,9 @@ function accountDialog() {
   openDialog(t('我的账号'),`<p>${demo?t('登录后，可以用自己的账号加入共同账本。'):t('已登录：{account}', {account:escape(state.store.currentUser.email || state.store.currentUser.displayName || t('我的账号'))})}</p><div class="form-actions">${demo?`<a class="button primary" href="index.html">${t('登录账号')}</a>`:`<button class="button primary" id="sign-out">${t('退出登录')}</button>`}</div>`);
   $('#sign-out')?.addEventListener('click',async event=>{
     const button=event.currentTarget;button.disabled=true;
-    try{await signOut();location.href='index.html';}
-    catch(error){formError(errorMessage(error));button.disabled=false;}
+    ++dataGeneration;autoSync?.stop();
+    try{await signOut();clearSession();location.href='index.html';}
+    catch(error){autoSync?.start();formError(errorMessage(error));button.disabled=false;}
   });
 }
 
@@ -344,6 +394,13 @@ async function selectLedger(id) {try {await loadData(id);}catch(error){toast(err
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
 window.addEventListener('hashchange',()=>{if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.snapshot)render();}});
 $('#language-picker').addEventListener('change',event=>setLanguage(event.target.value));
+document.addEventListener('visibilitychange',()=>autoSync?.wake());
+document.addEventListener('focusout',()=>autoSync?.wake());
+window.addEventListener('online',()=>autoSync?.wake());
+window.addEventListener('focus',()=>autoSync?.wake());
+window.addEventListener('pagehide',()=>{++dataGeneration;autoSync?.stop();});
+window.addEventListener('pageshow',()=>{if(!state.starting&&state.store?.mode==='api')startAutoSync();});
+$('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open)dialogRefresh=null;autoSync?.wake();});
 document.addEventListener('languagechange',()=>{
   const claimName=$('#claim-form input[name="name"]')?.value;
   translatePage();

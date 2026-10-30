@@ -203,3 +203,22 @@ test('account switching revokes the previous cookie without mixing another accou
   await good(b,'POST','/api/auth/logout',{});
   assert.equal((await good(b,'GET','/api/auth/me')).user,null);
 });
+
+test('update revisions expose only joined ledgers and advance atomically for every committed change',async()=>{
+  const f=await trio(),read=user=>good(user,'GET','/api/ledger-updates');
+  const version=async()=>{const rows=await read(alice);return BigInt(rows.find(row=>row.id===f.id).revision);};
+  assert.equal((await request(null,'GET','/api/ledger-updates')).status,401);
+  assert.equal((await read(outsider)).some(row=>row.id===f.id),false);
+  const initial=await version(),key=randomUUID(),args=[expense('owner',{[f.b]:100},100)];
+  const id=await command(alice,f.id,'addExpense',args,key);assert.equal(await version(),initial+1n);
+  await command(alice,f.id,'addExpense',args,key);assert.equal(await version(),initial+1n);
+  await post(bob,f.id,'addMember',['forbidden']);assert.equal(await version(),initial+1n);
+  const payment=await command(alice,f.id,'recordPayment',[{expenseId:id,fromMemberId:f.b,amountCents:40}]);assert.equal(await version(),initial+2n);
+  await command(alice,f.id,'reversePayment',[payment]);assert.equal(await version(),initial+3n);
+  await command(alice,f.id,'reverseExpense',[id]);assert.equal(await version(),initial+4n);
+  const member=await command(alice,f.id,'addMember',['new']),token=await command(alice,f.id,'createInvite',[member]);
+  await good(outsider,'POST',`/api/invites/${token}/commands`,{type:'claim'});assert.equal(await version(),initial+7n);
+  assert.equal((await read(outsider)).some(row=>row.id===f.id),false);
+  await good(alice,'POST',`/api/invites/${token}/commands`,{type:'approve',uid:outsider.uid});
+  const joined=(await read(outsider)).find(row=>row.id===f.id);assert.deepEqual(Object.keys(joined).sort(),['id','revision']);assert.equal(BigInt(joined.revision),initial+8n);
+});
