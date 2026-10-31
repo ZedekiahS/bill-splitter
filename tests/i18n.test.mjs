@@ -71,7 +71,7 @@ test('all shared-ledger source messages and login labels have English translatio
   const { default: appMessages } = await import('../public/scripts/app-messages.mjs');
   registerMessages(appMessages);registerMessages(accountMessages);
   setLanguage('en');
-  const sources = await Promise.all(['app.mjs', 'expense-entry.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const sources = await Promise.all(['app.mjs', 'expense-entry.mjs', 'expense-history-view.mjs', 'receipt-viewer.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
   const keys = sources.flatMap(source => [...source.matchAll(/\bt\((['"])(.*?)\1/g)].map(match => match[2]));
   const login = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   keys.push(...[...login.matchAll(/data-i18n="([^"]+)"/g)].map(match => match[1]));

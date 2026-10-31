@@ -11,8 +11,8 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 30 tests use real PostgreSQL transactions: 13 through Fastify request
-injection and 17 through a loopback HTTP listener with independent session cookies.
+The 37 tests use real PostgreSQL transactions: 13 through Fastify request
+injection and 24 through a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment
@@ -36,7 +36,7 @@ node tests/api-client.test.mjs
 node tests/auto-sync.test.mjs
 ```
 
-All 170 local tests pass across these nine suites. The API-client suite uses
+All 173 local tests pass across these nine suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -46,7 +46,7 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `ledger-core.test.mjs` | 42 | Shared-ledger shares and balances, exact-amount splits and total validation, partial repayments and reversals, invitations/identity approval, isolated storage, settlement text, dates and participant limits |
 | `i18n.test.mjs` | 7 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
-| `expense-features.test.mjs` | 21 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
+| `expense-features.test.mjs` | 24 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
 | `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
 | `api-client.test.mjs` | 6 | Offline/503/lost-response retry keys, rejected inputs, expired login and concurrent duplicates |
@@ -165,3 +165,12 @@ For the current authenticated three-account browser review, see
 [the acceptance report](../docs/review/full-acceptance-2026-10-30.md). It uses the
 real Node/PostgreSQL backend and a dedicated disposable database, not demo mode.
 Start it only after API tests finish; those tests truncate fixture tables.
+
+## Expense correction and attachment follow-up
+
+The 24 HTTP scenarios include correction authorization, before/after snapshots,
+version conflicts, idempotent retries, paid-expense financial locks, reversal then
+correction, immutable private attachment history, forged receipt references and
+legacy history with unknown actors. The local suite additionally verifies original
+image bytes, picker size/type rejection and filename/URL safety. See
+[the browser review](../docs/review/expense-history-2026-10-31.md).

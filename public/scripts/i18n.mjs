@@ -104,7 +104,7 @@ export function translateError(error) {
   if (/network-request-failed|unavailable|Failed to fetch/i.test(`${error?.code} ${message}`)) return t('网络连接失败，请检查网络后重试。');
   if (message === '浏览器不支持本地演示存储。' || error?.name === 'QuotaExceededError') return t('当前浏览器无法保存账本，请允许网站存储后重试。');
   if (message === 'Firebase 尚未配置，请使用演示模式或配置真实服务。') return t('暂时无法连接账号服务。');
-  const field = /^(费用名称|账本名称|成员名字|币种|名字)不能为空，且不能超过 (\d+) 个字。$/.exec(message);
+  const field = /^(费用名称|账本名称|成员名字|币种|名字|更正说明)不能为空，且不能超过 (\d+) 个字。$/.exec(message);
   if (field) return t('{label}不能为空，且不能超过 {max} 个字。', { label: t(field[1]), max: field[2] });
   return Object.hasOwn(messages, message) ? t(message) : t('没有保存成功，请重试。');
 }

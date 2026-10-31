@@ -502,6 +502,49 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
 .entry-extras input[type="file"]::file-selector-button { min-height: 44px; margin-right: 12px; padding: 8px 13px; border: 1px solid var(--input-border); border-radius: var(--radius-control); color: var(--primary); background: var(--surface); font: inherit; cursor: pointer; }
 .entry-extras input[type="file"]::file-selector-button:hover { background: var(--surface-subtle); }
 .receipt-list { display: flex; flex-direction: column; gap: 8px; margin-block: 12px; }
+.receipt-dropzone { padding: 16px; border: 1px dashed var(--input-border); border-radius: var(--radius-control); background: var(--surface-subtle); }
+.receipt-dropzone.dragging { border-style: solid; background: var(--primary-tint); }
+.receipt-dropzone .form-field { margin-bottom: 8px; }
+.receipt-dropzone .form-hint + .form-hint { margin-top: 6px; }
+.receipt-edit-row { display: flex; align-items: center; gap: 12px; }
+.receipt-edit-row > .receipt-row { flex: 1; }
+.receipt-edit-row > button { min-width: 44px; min-height: 44px; }
+.receipt-preview { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); cursor: zoom-in; }
+.receipt-preview img { display: block; width: 64px; height: 76px; object-fit: contain; }
+.receipt-gallery { flex-direction: column; }
+.receipt-gallery .receipt-preview img { width: 64px; height: 76px; }
+.receipt-row > a { flex-shrink: 0; min-height: 44px; display: inline-flex; align-items: center; }
+.change-reason { margin-top: 24px; }
+.dialog-footer { flex-wrap: wrap; }
+.activity-list { list-style: none; margin: 0; padding: 0; }
+.activity-entry { padding: 22px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.activity-entry:first-child { padding-top: 4px; }
+.activity-entry:last-child { border-bottom: 0; }
+.activity-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
+.activity-heading time, .activity-actor { color: var(--muted); font-size: 13px; }
+.activity-actor { margin: 6px 0 12px; overflow-wrap: anywhere; }
+.activity-entry summary { min-height: 44px; padding-block: 12px; cursor: pointer; color: var(--primary); }
+.history-versions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 24px; }
+.history-version { min-width: 0; padding-top: 12px; }
+.history-version h4 { margin-bottom: 16px; font-size: 15px; }
+.history-version dl { display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 10px 14px; margin: 0; }
+.history-version dt { color: var(--muted); }
+.history-version dd { margin: 0; overflow-wrap: anywhere; }
+.history-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wide-dialog.history-dialog .dialog-body { display: block; overflow: auto; min-height: 0; }
+.receipt-viewer { width: min(1000px,calc(100vw - 32px)); height: calc(100dvh - 48px); padding: 20px; overflow: hidden; }
+.receipt-viewer[open] { display: flex; flex-direction: column; }
+.receipt-viewer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.receipt-viewer-header strong { min-width: 0; overflow-wrap: anywhere; }
+.receipt-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-block: 14px; }
+.receipt-toolbar output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+.receipt-stage { flex: 1; min-height: 0; overflow: auto; background: var(--surface-subtle); overscroll-behavior: contain; }
+.receipt-stage img { display: block; width: 100%; max-width: none; height: auto; }
+@media (max-width: 600px) {
+  .history-versions { grid-template-columns: minmax(0,1fr); gap: 24px; }
+  .receipt-viewer { padding: 14px; }
+  .history-version dl { grid-template-columns: 90px minmax(0,1fr); }
+}
 .receipt-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding-block: 9px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .receipt-row > img { flex: 0 0 48px; width: 48px; height: 58px; object-fit: contain; background: var(--surface-subtle); border-radius: 4px; }
 .receipt-row > span, .receipt-row > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }

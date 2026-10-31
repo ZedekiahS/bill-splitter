@@ -87,7 +87,7 @@ test('itemized expenses preserve note and receipt across reload and reject incon
   const receipt={name:'receipt.pdf',type:'application/pdf',size:5,dataUrl:'data:application/pdf;base64,JVBERi0='};
   const id=await f.store.addExpense(f.id,{...f.payload,...details,note:'Paid cash',receipts:[receipt]});
   const s=await createStore({mode:'demo',storage:f.memory,user:OWNER}).loadLedger(f.id);
-  assert.equal(s.expenses[0].id,id); assert.equal(s.expenses[0].note,'Paid cash'); assert.deepEqual(s.expenses[0].receipts,[receipt]);
+  assert.equal(s.expenses[0].id,id); assert.equal(s.expenses[0].note,'Paid cash'); assert.deepEqual(s.expenses[0].receipts.map(({id,...file})=>file),[receipt]); assert.ok(s.expenses[0].receipts[0].id);
   assert.deepEqual(s.expenses[0].shares,{owner:51,[f.alice]:300});
   await assert.rejects(f.store.addExpense(f.id,{...f.payload,...details,shares:{owner:52,[f.alice]:299}}));
 });

@@ -46,10 +46,12 @@ test('login rotates cookies and logout revokes access',async()=>{
   assert.equal((await request('GET','/api/ledgers',undefined,session)).statusCode,401);
 });
 test('CSRF, malformed JSON, and oversized bodies are rejected',async()=>{
+  const entry=await request('GET','/scripts/expense-entry.mjs');
+  assert.equal(entry.statusCode,200);assert.equal(entry.headers['cache-control'],'no-cache');
   assert.equal((await request('POST','/api/ledgers',{},alice,randomUUID(),{origin:'https://evil.example'})).statusCode,403);
   assert.equal((await request('POST','/api/ledgers',{},alice,randomUUID(),{'x-bill-splitter':''})).statusCode,403);
   assert.equal((await request('POST','/api/ledgers','{"__proto__":{"admin":true}}',alice)).statusCode,400);
-  assert.equal((await request('POST','/api/ledgers',{title:'x'.repeat(1024*1024+1)},alice)).statusCode,413);
+  assert.equal((await request('POST','/api/ledgers',{title:'x'.repeat(10*1024*1024+1)},alice)).statusCode,413);
 });
 
 test('expired sessions lose access and login limits recover after their window',async()=>{

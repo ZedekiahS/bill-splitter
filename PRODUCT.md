@@ -22,6 +22,9 @@ People sharing expenses. The current implementation targets friends, roommates a
 - Repayments are recorded confirmations, not payment processing. Opening or copying a message does not mean it was sent.
 - A temporary member is not an authenticated account. Shared-ledger claiming requires an account and ledger-owner approval.
 - Money uses integer cents. A ledger has one currency. No cross-currency balance aggregation.
+- Saved-expense corrections require payer/owner permission and a reason. Effective repayments lock financial fields until reversed; metadata and receipts remain editable. Conflicting versions never silently overwrite.
+- Expense history preserves creation, corrections, payment confirmations and reversals with actors/times and attachment versions. Unknown legacy facts remain unknown. This is expense history, not a ledger-membership administration audit.
+- Up to three private attachments per expense, each stored at up to 2 MiB. Images up to 10 MiB can be compressed locally; no OCR or server-side original-image archive.
 - No production deployment was requested for this review.
 
 ## Brand Commitments

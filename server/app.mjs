@@ -7,12 +7,12 @@ import { ledgerService } from './ledgers.mjs';
 export async function buildApp({pool,origins,production=false,registration=true,trustProxy=false,logger=false}){
   const allowed=new Set(origins);
   if(!allowed.size||production&&[...allowed].some(origin=>!origin.startsWith('https://')))throw new Error('Production requires explicit HTTPS PUBLIC_ORIGINS.');
-  const app=Fastify({logger,trustProxy,bodyLimit:1024*1024,requestTimeout:30000});
+  const app=Fastify({logger,trustProxy,bodyLimit:10*1024*1024,requestTimeout:30000});
   const auth=authService(pool,{secure:production,registration}),ledgers=ledgerService(pool);
   app.setErrorHandler((error,request,reply)=>{
     let status=error.statusCode||500,message='服务暂时不可用，请稍后重试。';
     if(error instanceof HttpError)message=error.message;
-    else if(error.name==='Error'&&/^[\u4e00-\u9fff]/.test(error.message)){status=/只有|只能|不是该账本|其他账号/.test(error.message)?403:400;message=error.message;}
+    else if(error.name==='Error'&&/^[\u4e00-\u9fff]/.test(error.message)){status=error.statusCode||(/只有|只能|不是该账本|其他账号/.test(error.message)?403:400);message=error.message;}
     else if(status===413)message='文件或请求太大，请减小后重试。';
     else if(status<500||error instanceof TypeError){status=400;message='请求内容无效，请刷新后重试。';}
     if(status>=500)request.log.error({code:error.code},'Request failed');
@@ -55,6 +55,7 @@ export async function buildApp({pool,origins,production=false,registration=true,
     reply.header('Content-Type',file.mime).header('Content-Disposition',`${file.mime==='application/pdf'?'attachment':'inline'}; filename="receipt"; filename*=UTF-8''${encodeURIComponent(file.name).replace(/'/g,'%27')}`);
     return reply.send(file.bytes);
   });
-  await app.register(staticFiles,{root:fileURLToPath(new URL('../public/',import.meta.url)),index:'index.html',cacheControl:false});
+  // Unversioned entry points and modules must revalidate after an application update.
+  await app.register(staticFiles,{root:fileURLToPath(new URL('../public/',import.meta.url)),index:'index.html',cacheControl:false,setHeaders:reply=>reply.header('Cache-Control','no-cache')});
   return app;
 }

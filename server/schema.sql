@@ -34,8 +34,10 @@ CREATE TABLE IF NOT EXISTS bs_invites (
 CREATE TABLE IF NOT EXISTS bs_receipts (
   id uuid PRIMARY KEY, ledger_id uuid NOT NULL REFERENCES bs_ledgers(id), expense_id uuid NOT NULL,
   name text NOT NULL, mime text NOT NULL, bytes bytea NOT NULL,
-  CHECK (octet_length(bytes) BETWEEN 1 AND 204800)
+  CHECK (octet_length(bytes) BETWEEN 1 AND 2097152)
 );
+ALTER TABLE bs_receipts DROP CONSTRAINT IF EXISTS bs_receipts_bytes_check;
+ALTER TABLE bs_receipts ADD CONSTRAINT bs_receipts_bytes_check CHECK (octet_length(bytes) BETWEEN 1 AND 2097152);
 CREATE TABLE IF NOT EXISTS bs_requests (
   user_id uuid NOT NULL REFERENCES bs_users(id), key uuid NOT NULL, fingerprint text NOT NULL,
   result jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(user_id,key)

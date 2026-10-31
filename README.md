@@ -59,7 +59,15 @@ They demonstrate the claim and approval flow, not cross-device sharing.
 - Up to 8 items per expense, each shared by its selected participants, plus a note
   of up to 1,000 characters and up to 3 JPG/PNG/WebP/PDF receipts. Images up to
   10 MB are accepted and compressed locally when needed; stored receipts and
-  PDFs must each fit within 200 KB. Templates reuse items and notes, not receipts.
+  PDFs must each fit within 2 MiB. Smaller images retain their original bytes.
+  Select files, drop them, or paste screenshots; preview images with zoom/fit and
+  download attachments. Templates reuse items and notes, not receipts.
+- The payer or ledger owner can supplement/correct a saved expense with a reason.
+  Effective repayments lock the amount, payer and splits until reversed.
+  Concurrent edits reject stale versions and retain the input draft.
+- Expense history records creation, before/after corrections, receipts and reversals
+  with actor and time. Replaced attachments remain privately accessible in history.
+  Legacy entries show only recorded facts; missing actors are not invented.
 - Temporary named members who can later claim their identity through an invite,
   subject to the ledger owner's approval. A matching name never grants access.
 - Partial repayments confirmed by the recipient or ledger owner. Reversals leave
@@ -108,13 +116,13 @@ npm test
 npm run test:api
 ```
 
-All 170 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 173 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
-regressions, 21 recurring/item/attachment checks, 13 feature-storage checks,
+regressions, 24 recurring/item/attachment checks, 13 feature-storage checks,
 7 shared-session UI regressions, 6 API-client retry/error checks, and 5 automatic
 synchronization scheduling checks.
-The 30 PostgreSQL API tests exercise real authenticated transactions, permissions,
-concurrency and private files, including 17 scenarios through an actual HTTP
+The 37 PostgreSQL API tests exercise real authenticated transactions, permissions,
+concurrency and private files, including 24 scenarios through an actual HTTP
 listener. They reset only their dedicated test database and run sequentially.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.
@@ -126,3 +134,6 @@ See [LICENSE](LICENSE). Existing vendor license headers are preserved in `public
 For three-account browser workflows, simulated coordination, failures and coverage
 limits, see [the full acceptance review](docs/review/full-acceptance-2026-10-30.md).
 Automatic synchronization is covered in [the follow-up review](docs/review/auto-sync-2026-10-30.md).
+
+Expense corrections, history and attachment workflows are documented in
+[the October 31 review](docs/review/expense-history-2026-10-31.md).

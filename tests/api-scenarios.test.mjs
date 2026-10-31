@@ -140,14 +140,14 @@ test('all member mutation commands reject an unrelated account and leave the led
 
 test('invalid amounts, dates, members, notes and receipt bytes roll back the entire write',async()=>{
   const f=await trio(),valid=expense('owner',{owner:100},100),before=await snapshot(alice,f.id);
-  const invalid=[{amountCents:0},{amountCents:-1},{amountCents:1.5},{amountCents:Number.MAX_SAFE_INTEGER+1},{amountCents:'100'}, {shares:{owner:-1}},{shares:{owner:101}},{shares:{}},{shares:{[randomUUID()]:100}}, {payerMemberId:randomUUID()},{date:'2026-02-30'},{title:' '},{title:'x'.repeat(121)},{note:'x'.repeat(1001)},{items:[{title:'wrong',amountCents:101,memberIds:['owner']}]},{receipts:[pdf(),pdf(),pdf(),pdf()]},{receipts:[{...pdf(),size:204801}]},{receipts:[{...pdf(),dataUrl:'data:application/pdf;base64,eA==',size:1}]},{sourceTemplateId:randomUUID()}];
+  const invalid=[{amountCents:0},{amountCents:-1},{amountCents:1.5},{amountCents:Number.MAX_SAFE_INTEGER+1},{amountCents:'100'}, {shares:{owner:-1}},{shares:{owner:101}},{shares:{}},{shares:{[randomUUID()]:100}}, {payerMemberId:randomUUID()},{date:'2026-02-30'},{title:' '},{title:'x'.repeat(121)},{note:'x'.repeat(1001)},{items:[{title:'wrong',amountCents:101,memberIds:['owner']}]},{receipts:[pdf(),pdf(),pdf(),pdf()]},{receipts:[{...pdf(),size:2097153}]},{receipts:[{...pdf(),dataUrl:'data:application/pdf;base64,eA==',size:1}]},{sourceTemplateId:randomUUID()}];
   for(const change of invalid){const r=await post(alice,f.id,'addExpense',[{...valid,...change}]);assert.equal(r.status,400,JSON.stringify(change));}
   assert.deepEqual(await snapshot(alice,f.id),before);
   assert.equal(Number((await pool.query('SELECT count(*) FROM bs_receipts WHERE ledger_id=$1',[f.id])).rows[0].count),0);
 });
 
 test('receipt count and exact size boundaries work, and three users see private metadata',async()=>{
-  const f=await trio(),bytes=Buffer.alloc(204800,32);bytes.write('%PDF-1.4');const file={name:'边界收据.pdf',type:'application/pdf',size:bytes.length,dataUrl:`data:application/pdf;base64,${bytes.toString('base64')}`};
+  const f=await trio(),bytes=Buffer.alloc(2097152,32);bytes.write('%PDF-1.4');const file={name:'边界收据.pdf',type:'application/pdf',size:bytes.length,dataUrl:`data:application/pdf;base64,${bytes.toString('base64')}`};
   await command(alice,f.id,'addExpense',[expense('owner',{owner:100},100,{note:'凭据',receipts:[file,pdf(),pdf()]})]);
   const s=await consistent(f);assert.equal(s.expenses[0].receipts.length,3);const saved=s.expenses[0].receipts[0];assert.equal(saved.dataUrl,undefined);
   const response=await fetch(base+saved.url,{headers:{cookie:chen.cookie}});assert.equal(response.status,200);assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);assert.equal(response.headers.get('cache-control'),'no-store');
@@ -221,4 +221,78 @@ test('update revisions expose only joined ledgers and advance atomically for eve
   assert.equal((await read(outsider)).some(row=>row.id===f.id),false);
   await good(alice,'POST',`/api/invites/${token}/commands`,{type:'approve',uid:outsider.uid});
   const joined=(await read(outsider)).find(row=>row.id===f.id);assert.deepEqual(Object.keys(joined).sort(),['id','revision']);assert.equal(BigInt(joined.revision),initial+8n);
+});
+
+test('expense corrections preserve the original and update balances, actor, reason and version',async()=>{
+  const f=await trio(),original=expense(f.b,{owner:4000,[f.b]:4000,[f.c]:4000},12000,{note:'original',receipts:[pdf()]});
+  const id=await command(bob,f.id,'addExpense',[original]);let row=(await snapshot(alice,f.id)).expenses[0];
+  const file=row.receipts[0],key=randomUUID(),update={...original,amountCents:15000,shares:{owner:5000,[f.b]:5000,[f.c]:5000},title:'住宿更正',note:'corrected',receipts:[{id:file.id}],expectedVersion:row.version,changeReason:'房价有调整',history:[{actorUid:outsider.uid}],createdByUid:outsider.uid};
+  const response=await command(bob,f.id,'updateExpense',[id,update],key);await command(bob,f.id,'updateExpense',[id,update],key);assert.equal(response,id);
+  row=(await consistent(f)).expenses[0];assert.equal(row.version,2);assert.equal(row.history.length,2);assert.equal(row.createdByUid,bob.uid);assert.equal(row.history[1].actorUid,bob.uid);assert.equal(row.history[1].actorName,'小林');assert.equal(row.history[1].reason,'房价有调整');
+  assert.equal(row.history[0].after.amountCents,12000);assert.equal(row.history[1].before.amountCents,12000);assert.equal(row.history[1].after.amountCents,15000);assert.equal(row.history[1].before.receipts[0].url,file.url);assert.equal(row.receipts[0].dataUrl,undefined);
+  assert.equal(Number((await pool.query('SELECT count(*) FROM bs_receipts WHERE expense_id=$1',[id])).rows[0].count),1);
+});
+
+test('paid expenses allow attachments and notes but reject financial changes until repayments reverse',async()=>{
+  const f=await trio(),original=expense(f.b,{owner:5000,[f.b]:5000},10000);
+  const id=await command(bob,f.id,'addExpense',[original]),payment=await command(bob,f.id,'recordPayment',[{expenseId:id,fromMemberId:'owner',amountCents:2000}]);
+  let row=(await snapshot(bob,f.id)).expenses[0];
+  await command(bob,f.id,'updateExpense',[id,{...original,receipts:[pdf()],note:'补充凭据',expectedVersion:row.version,changeReason:'补充付款截图'}]);
+  row=(await consistent(f)).expenses[0];assert.equal(row.repaid.owner,2000);assert.equal(remainingFor(row,'owner'),3000);
+  const bad={...original,amountCents:12000,shares:{owner:6000,[f.b]:6000},expectedVersion:row.version,changeReason:'金额更正',receipts:row.receipts.map(file=>({id:file.id}))};
+  assert.equal((await post(bob,f.id,'updateExpense',[id,bad])).status,400);assert.equal((await snapshot(bob,f.id)).expenses[0].version,row.version);
+  await command(bob,f.id,'reversePayment',[payment]);row=(await snapshot(bob,f.id)).expenses[0];
+  await command(bob,f.id,'updateExpense',[id,{...bad,expectedVersion:row.version}]);row=(await consistent(f)).expenses[0];
+  assert.equal(row.amountCents,12000);assert.deepEqual(row.history.map(event=>event.type),['created','payment','updated','payment-reversed','updated']);
+});
+
+test('simultaneous owner and payer corrections reject the stale version instead of overwriting',async()=>{
+  const f=await trio(),original=expense(f.b,{owner:100,[f.b]:100},200),id=await command(bob,f.id,'addExpense',[original]);
+  const body={...original,expectedVersion:1,changeReason:'补充说明'};
+  const results=await Promise.all([post(alice,f.id,'updateExpense',[id,{...body,note:'owner edit'}]),post(bob,f.id,'updateExpense',[id,{...body,note:'payer edit'}])]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);const row=(await consistent(f)).expenses[0];assert.equal(row.history.length,2);assert.equal(row.version,2);assert.equal(row.note,results[0].status===200?'owner edit':'payer edit');
+});
+
+test('other members, outsiders, forged receipt references and no-op updates leave history unchanged',async()=>{
+  const f=await trio(),original=expense(f.b,{owner:100,[f.b]:100},200),id=await command(bob,f.id,'addExpense',[original]);
+  const other=await command(alice,f.id,'addExpense',[expense('owner',{owner:100},100,{receipts:[pdf()]})]);
+  const before=await snapshot(bob,f.id),receipt=before.expenses.find(row=>row.id===other).receipts[0],body={...original,expectedVersion:1,changeReason:'更正',note:'new'};
+  for(const user of[chen,outsider])assert.equal((await post(user,f.id,'updateExpense',[id,body])).status,403);
+  for(const change of[{receipts:[{id:receipt.id}]},{receipts:[{id:randomUUID()}]},{amountCents:0},{expectedVersion:0},{changeReason:''},{note:''}])assert.equal((await post(bob,f.id,'updateExpense',[id,{...body,...change}])).status,400);
+  assert.deepEqual(await snapshot(bob,f.id),before);
+});
+
+test('removed receipts remain readable only to members through immutable history snapshots',async()=>{
+  const f=await trio(),original=expense('owner',{owner:100,[f.b]:100},200,{receipts:[pdf()]}),id=await command(alice,f.id,'addExpense',[original]);
+  let row=(await snapshot(alice,f.id)).expenses[0];const first=row.receipts[0];
+  await command(alice,f.id,'updateExpense',[id,{...original,receipts:[],expectedVersion:1,changeReason:'替换附件'}]);
+  row=(await consistent(f)).expenses[0];assert.equal(row.receipts.length,0);assert.equal(row.history[1].before.receipts[0].url,first.url);assert.equal(row.history[1].after.receipts.length,0);
+  assert.equal((await request(bob,'GET',first.url)).status,200);assert.equal((await request(outsider,'GET',first.url)).status,403);
+  await command(alice,f.id,'reverseExpense',[id]);row=(await snapshot(alice,f.id)).expenses[0];assert.equal(row.history.at(-1).type,'reversed');assert.equal(row.history.at(-1).actorUid,alice.uid);
+  assert.equal((await post(alice,f.id,'updateExpense',[id,{...original,expectedVersion:row.version,changeReason:'改已撤销账单'}])).status,400);
+});
+
+test('legacy expenses gain honest history without inventing a missing reversal actor',async()=>{
+  const f=await trio(),id=await command(alice,f.id,'addExpense',[expense('owner',{owner:100},100)]);
+  await command(alice,f.id,'reverseExpense',[id]);
+  await pool.query("UPDATE bs_ledgers SET body=body #- ARRAY['expenses',$1::text,$2,'history'] #- ARRAY['expenses',$1::text,$2,'version'] WHERE id=$1::uuid",[f.id,id]);
+  const row=(await snapshot(alice,f.id)).expenses[0];assert.deepEqual(row.history.map(event=>event.type),['created','reversed']);assert.equal(row.history.at(-1).actorUid,null);assert.equal(row.history.at(-1).actorName,null);
+});
+
+test('item corrections and payer reassignment preserve history and transfer editing permission',async()=>{
+  const f=await trio(),items=[{title:'住宿',amountCents:30000,memberIds:['owner',f.b,f.c]},{title:'早餐',amountCents:2000,memberIds:[f.b,f.c]}];
+  const original=expense(f.b,itemizedShares(items).shares,32000,{items}),id=await command(bob,f.id,'addExpense',[original]);
+  const correctedItems=[items[0],{...items[1],amountCents:1000,memberIds:[f.c]}],details=itemizedShares(correctedItems);
+  const corrected={...original,...details,expectedVersion:1,changeReason:'早餐仅安安消费'};
+  await command(bob,f.id,'updateExpense',[id,corrected]);
+  let row=(await consistent(f)).expenses[0];assert.deepEqual(row.shares,{owner:10000,[f.b]:10000,[f.c]:11000});assert.deepEqual(row.history[1].before.items,items);assert.deepEqual(row.history[1].after.items,correctedItems);
+  const reassigned={...corrected,payerMemberId:f.c,expectedVersion:row.version,changeReason:'更正实际垫付人'};
+  await command(alice,f.id,'updateExpense',[id,reassigned]);row=(await consistent(f)).expenses[0];
+  const supplement={...reassigned,note:'补充早餐明细',expectedVersion:row.version,changeReason:'补充说明'};
+  assert.equal((await post(bob,f.id,'updateExpense',[id,supplement])).status,403);
+  await command(chen,f.id,'updateExpense',[id,supplement]);
+  await command(chen,f.id,'recordPayment',[{expenseId:id,fromMemberId:'owner',amountCents:1000}]);row=(await snapshot(chen,f.id)).expenses[0];
+  assert.equal((await post(chen,f.id,'updateExpense',[id,{...original,payerMemberId:f.c,expectedVersion:row.version,changeReason:'改变已收款明细'}])).status,400);
+  assert.equal((await post(alice,f.id,'updateExpense',[id,{...supplement,payerMemberId:f.b,expectedVersion:row.version}])).status,400);
+  assert.equal((await consistent(f)).expenses[0].createdByUid,bob.uid);
 });

@@ -1,10 +1,34 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readReceiptFile, receiptBlob } from '../public/scripts/receipt-files.mjs';
+import { receiptUrl, receiptMarkup } from '../public/scripts/receipt-viewer.mjs';
 import { itemizedShares, validateExpenseExtras, normalizeSchedule, dueOccurrences, occurrenceId, isScheduledDate } from '../public/scripts/expense-features.mjs';
 
 const item = (amountCents, memberIds = ['a', 'b'], title = '晚餐') => ({ title, amountCents, memberIds });
 const recurring = (overrides = {}) => ({ id: 'rent', status: 'active', frequency: 'monthly', startDate: '2026-01-31', ...overrides });
 const receipt = (overrides = {}) => ({ name: 'receipt.png', type: 'image/png', size: 3, dataUrl: 'data:image/png;base64,YWJj', ...overrides });
+
+test('small screenshots retain their original bytes and type through download', async () => {
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a02kAAAAASUVORK5CYII=', 'base64');
+  const result = await readReceiptFile(new File([bytes], 'stay.png', {type:'image/png'}));
+  assert.equal(result.type,'image/png');
+  assert.deepEqual(Buffer.from(await receiptBlob(result).arrayBuffer()),bytes);
+});
+
+test('receipt picker rejects empty, disguised and oversized files', async () => {
+  await assert.rejects(readReceiptFile(new File([], 'empty.png')),/为空/);
+  await assert.rejects(readReceiptFile(new File(['%PDF-1.4'], 'fake.png',{type:'image/png'})),/有效/);
+  const pdf=Buffer.alloc(2*1024*1024+1);pdf.write('%PDF-1.4');
+  await assert.rejects(readReceiptFile(new File([pdf], 'large.pdf',{type:'application/pdf'})),/PDF 不能超过 2 MB/);
+  await assert.rejects(readReceiptFile({size:10*1024*1024+1,arrayBuffer(){throw Error('must not read');}}),/10 MB/);
+});
+
+test('attachment markup escapes filenames and rejects external or script URLs', () => {
+  for(const url of ['https://evil.test/a.png','javascript:alert(1)','//evil.test/a.png','/api/ledgers/abc/receipts/def?redirect=x']) assert.equal(receiptUrl({url}),'');
+  const html=receiptMarkup([{name:'<img onerror="alert(1)">',type:'image/png',url:'/api/ledgers/abc/receipts/def'}]);
+  assert.ok(html.includes('&lt;img onerror=&quot;alert(1)&quot;&gt;'));
+  assert.equal(html.includes('<img onerror='),false);
+});
 
 test('itemized bills charge only each item’s selected diners and preserve cents', () => {
   const result = itemizedShares([item(1001, ['a', 'b', 'c']), item(501, ['b', 'c'], '甜点')]);
@@ -65,9 +89,9 @@ test('receipt validation keeps accepted metadata and copies the receipt object',
 
 test('receipts enforce count and byte limits before persistence', () => {
   assert.throws(() => validateExpenseExtras({receipts:Array.from({length:4},()=>receipt())}));
-  for (const size of [0,-1,1.5,204801,NaN]) assert.throws(() => validateExpenseExtras({receipts:[receipt({size})]}));
-  const bytes = Buffer.alloc(204800, 0);
-  assert.equal(validateExpenseExtras({receipts:[receipt({size:bytes.length,dataUrl:`data:image/png;base64,${bytes.toString('base64')}`})]}).receipts[0].size, 204800);
+  for (const size of [0,-1,1.5,2097153,NaN]) assert.throws(() => validateExpenseExtras({receipts:[receipt({size})]}));
+  const bytes = Buffer.alloc(2097152, 0);
+  assert.equal(validateExpenseExtras({receipts:[receipt({size:bytes.length,dataUrl:`data:image/png;base64,${bytes.toString('base64')}`})]}).receipts[0].size, 2097152);
 });
 
 test('receipt MIME, encoded length, alphabet and canonical padding must match', () => {

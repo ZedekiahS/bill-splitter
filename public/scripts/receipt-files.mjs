@@ -1,4 +1,4 @@
-const MAX_RECEIPT_BYTES = 200 * 1024;
+const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
@@ -55,14 +55,14 @@ async function shrinkImage(bytes, type) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) throw new Error();
-    let scale = Math.min(1, 1800 / Math.max(width, height));
+    let scale = Math.min(1, 6000 / Math.max(width, height));
     for (let attempt = 0; attempt < 5; attempt++) {
       canvas.width = Math.max(1, Math.round(width * scale));
       canvas.height = Math.max(1, Math.round(height * scale));
       context.fillStyle = '#ffffff';
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      for (const quality of [0.9, 0.8, 0.7, 0.6]) {
+      for (const quality of [0.94, 0.88, 0.82, 0.76]) {
         const blob = await jpegBlob(canvas, quality);
         if (blob.size <= MAX_RECEIPT_BYTES) return new Uint8Array(await blob.arrayBuffer());
       }
@@ -81,7 +81,7 @@ export async function readReceiptFile(file) {
   if (!file || typeof file.arrayBuffer !== 'function' || !Number.isSafeInteger(file.size) || file.size < 1) {
     throw new Error('收据文件为空或无法读取。');
   }
-  if (file.size > MAX_IMAGE_BYTES) throw new Error('图片不能超过 10 MB，PDF 不能超过 200 KB。');
+  if (file.size > MAX_IMAGE_BYTES) throw new Error('图片不能超过 10 MB，PDF 不能超过 2 MB。');
   let bytes;
   try { bytes = new Uint8Array(await file.arrayBuffer()); }
   catch { throw new Error('收据文件为空或无法读取。'); }
@@ -90,7 +90,7 @@ export async function readReceiptFile(file) {
     throw new Error('请选择有效的 JPG、PNG、WebP 图片或 PDF 收据。');
   }
   if (type === 'application/pdf' && bytes.length > MAX_RECEIPT_BYTES) {
-    throw new Error('PDF 不能超过 200 KB，请压缩后再添加。');
+    throw new Error('PDF 不能超过 2 MB，请压缩后再添加。');
   }
   if (type.startsWith('image/') && bytes.length > MAX_RECEIPT_BYTES) {
     bytes = await shrinkImage(bytes, type);

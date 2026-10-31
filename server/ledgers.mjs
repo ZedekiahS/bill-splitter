@@ -6,7 +6,7 @@ import { HttpError,hash } from './auth.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['addMember','addExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){
@@ -17,12 +17,16 @@ export function ledgerService(pool){
     return rows[0].body;
   }
   async function save(client,ledgerId,state){
+    const savedFiles=new Map();
     for(const expense of Object.values(state.expenses[ledgerId]||{})){
-      for(let index=0;index<(expense.receipts||[]).length;index++){
-        const file=expense.receipts[index];if(!file.dataUrl)continue;
-        const bytes=Buffer.from(await receiptBlob(file).arrayBuffer()),receiptId=randomUUID();
+      const versions=[expense,...(expense.history||[]).flatMap(event=>[event.before,event.after].filter(Boolean))];
+      for(const version of versions)for(let index=0;index<(version.receipts||[]).length;index++){
+        const file=version.receipts[index];if(!file.dataUrl)continue;
+        if(file.id&&savedFiles.has(file.id)){version.receipts[index]=savedFiles.get(file.id);continue;}
+        const bytes=Buffer.from(await receiptBlob(file).arrayBuffer()),receiptId=file.id||randomUUID();
         await client.query('INSERT INTO bs_receipts(id,ledger_id,expense_id,name,mime,bytes) VALUES($1,$2,$3,$4,$5,$6)',[receiptId,ledgerId,expense.id||Object.keys(state.expenses[ledgerId]).find(key=>state.expenses[ledgerId][key]===expense),file.name,file.type,bytes]);
-        expense.receipts[index]={id:receiptId,name:file.name,type:file.type,size:bytes.length,url:`/api/ledgers/${ledgerId}/receipts/${receiptId}`};
+        const stored={id:receiptId,name:file.name,type:file.type,size:bytes.length,url:`/api/ledgers/${ledgerId}/receipts/${receiptId}`};
+        version.receipts[index]=stored;savedFiles.set(receiptId,stored);
       }
     }
     await client.query('UPDATE bs_ledgers SET body=$2,updated_at=now(),revision=revision+1 WHERE id=$1',[ledgerId,state]);

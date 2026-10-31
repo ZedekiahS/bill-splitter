@@ -78,3 +78,16 @@ payment receipt.
 New ledger dates use validated `YYYY-MM-DD` calendar strings. Original bills keep
 UTC date handling. Date-only labels must not shift when the viewer's timezone
 changes.
+
+## Expense corrections and receipts
+
+Reuse the expense editor for payer/owner corrections, with a required short reason.
+Show repayment locks at the relevant fields. Keep unsaved input during remote
+updates and show an actionable conflict error at save. History lives in the expense
+list and detail dialog; before/after sections expand on demand, side by side on
+desktop and stacked on mobile. Remote updates retain expanded history sections.
+
+Attachments accept the native picker, drag/drop and screenshot paste. Thumbnails
+open a keyboard-dismissable zoom/fit dialog without discarding editor input.
+Downloads retain filenames. Removing a current attachment preserves its historical
+version, explained once beside the editing controls.

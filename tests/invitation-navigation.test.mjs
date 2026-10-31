@@ -11,7 +11,7 @@ function fixture(status) {
   const location = new URL('http://localhost/app.html?invite=token');
   const context = vm.createContext({URL, URLSearchParams, location,
     history:{replaceState(_state,_title,url){location.href=String(url);}},
-    document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
+    document:{querySelectorAll(){return [];},querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
     window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
     calls,parseMoney,formatMoney,remainingFor,
   });
@@ -79,6 +79,10 @@ test('search input and active saves defer synchronization without losing a pendi
 });
 test('sync updates read-only dialog data without rebuilding an editable form',async()=>{
   const f=syncFixture();f.nodes.get('#action-dialog').open=true;
-  vm.runInContext("dialogRefresh=()=>calls.push(['dialog-hint']);",f.context);
+  f.context.historyRows=[{dataset:{historyId:'original'},open:true}];
+  f.context.document.querySelectorAll=selector=>f.context.historyRows.filter(row=>!selector.includes('[open]')||row.open);
+  vm.runInContext("dialogRefresh=()=>{calls.push(['dialog-hint']);historyRows=[{dataset:{historyId:'original'},open:false},{dataset:{historyId:'new'},open:false}];};",f.context);
   await vm.runInContext('syncChanges()',f.context);assert.equal(f.calls.filter(row=>row[0]==='dialog-hint').length,1);
+  assert.equal(f.context.historyRows[0].open,true,'keep the previously expanded history');
+  assert.equal(f.context.historyRows[1].open,false,'new history stays collapsed');
 });

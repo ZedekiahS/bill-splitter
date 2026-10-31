@@ -1,5 +1,6 @@
 import { assertCents, remainingFor, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
 import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
+import { expenseVersion, legacyHistory, ensureHistory, appendHistory } from './expense-history.mjs';
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const withId = (id, value) => ({ ...value, id });
@@ -113,7 +114,7 @@ export function createStateStore({read,mutate,user}) {
       async loadLedger(id) {
         const state = read(), ledger = state.ledgers[id], user = me(); readable(ledger, user);
         const invites = ledger.ownerUid === user.uid ? rows(state.invites).filter(invite => invite.ledgerId === id) : [];
-        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]), payments: rows(state.payments[id]), templates: rows(state.templates[id]), occurrences: rows(state.occurrences[id]), invites,
+        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]).map(expense=>({...expense,version:expense.version||1,history:expense.history||legacyHistory(expense.id,expense,state.payments[id],state.members[id])})), payments: rows(state.payments[id]), templates: rows(state.templates[id]), occurrences: rows(state.occurrences[id]), invites,
           claims: invites.flatMap(invite => rows(state.claims[invite.id]).map(claim => ({ ...claim, inviteToken: invite.id }))) };
       },
       async createLedger(payload) { return mutate((state, user, createdAt) => {
@@ -140,7 +141,34 @@ export function createStateStore({read,mutate,user}) {
           if (state.occurrences[id][key]) throw new Error("这期账单已经处理，请刷新账本。");
           state.occurrences[id][key] = occurrenceData(data.sourceTemplateId, data.sourceDate, "posted", expenseId, user, createdAt);
         }
-        state.expenses[id][expenseId] = data; return expenseId;
+        data.receipts=data.receipts.map(file=>({...file,id:newId()}));data.version=1;
+        state.expenses[id][expenseId] = data;ensureHistory(state,id,expenseId);return expenseId;
+      }); },
+      async updateExpense(id, expenseId, payload) { return mutate((state,user,timestamp)=>{
+        const previous=state.expenses[id]?.[expenseId];if(!previous)throw new Error('费用不存在。');
+        receiver(state.ledgers[id],previous,state.members[id][previous.payerMemberId],user);
+        if(!Number.isSafeInteger(payload.expectedVersion)||payload.expectedVersion<1)throw new Error('请重新打开账单后再更正。');
+        if(payload.expectedVersion!==(previous.version||1))throw Object.assign(new Error('账单已被其他成员更新。请保留输入，关闭后重新打开账单核对。'),{statusCode:409});
+        const reason=text(payload.changeReason,'更正说明',300),files=payload.receipts??[];
+        if(!Array.isArray(files)||files.length>3)throw new Error('每笔账单最多添加 3 份收据。');
+        const retained=new Set();
+        const receipts=files.map(file=>{
+          if(file?.id){const old=(previous.receipts||[]).find(row=>row.id===file.id);if(!old||retained.has(file.id))throw new Error('收据不属于这笔账单或已重复选择。');retained.add(file.id);return structuredClone(old);}
+          return {...validateExpenseExtras({receipts:[file]}).receipts[0],id:newId()};
+        });
+        const next=expenseData({...payload,receipts:[],sourceTemplateId:previous.sourceTemplateId,sourceDate:previous.sourceDate},state.members[id],previous.createdByUid,previous.createdAt);
+        if(state.ledgers[id].ownerUid!==user.uid&&state.members[id][next.payerMemberId].uid!==user.uid)throw new Error('只能记录由自己垫付的费用。');
+        next.receipts=receipts;
+        const financial=record=>JSON.stringify([record.amountCents,record.payerMemberId,Object.entries(consumptionShares(record)).sort(([a],[b])=>a.localeCompare(b)),record.items||[]]);
+        const financialChanged=financial(next)!==financial(previous);
+        if(financialChanged&&Object.values(previous.repaid).some(value=>value!==0))throw new Error('已有收款记录。请先撤销相关收款，再更改金额、垫付人或分摊。');
+        if(!financialChanged)next.shares=structuredClone(previous.shares);
+        next.repaid=Object.fromEntries(Object.keys(next.shares).map(key=>[key,previous.repaid[key]||0]));
+        const before=expenseVersion(previous),after=expenseVersion(next);
+        if(JSON.stringify(before)===JSON.stringify(after))throw new Error('没有需要保存的更改。');
+        ensureHistory(state,id,expenseId);
+        Object.assign(previous,next,{lastPaymentId:previous.lastPaymentId,updatedAt:timestamp});
+        appendHistory(state,id,expenseId,user,timestamp,{type:'updated',reason,before,after});return expenseId;
       }); },
       async saveTemplate(id, payload, templateId) { return mutate((state, user, timestamp) => {
         const ledger = state.ledgers[id]; readable(ledger, user);
@@ -166,23 +194,29 @@ export function createStateStore({read,mutate,user}) {
         const expense = state.expenses[id]?.[payload.expenseId]; if (!expense) throw new Error("费用不存在。");
         receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
         const data = paymentData(payload.expenseId, expense, payload, user.uid, createdAt), paymentId = newId();
+        ensureHistory(state,id,payload.expenseId);
         expense.repaid[data.fromMemberId] += data.amountCents; expense.lastPaymentId = paymentId;
-        state.payments[id][paymentId] = data; return paymentId;
+        state.payments[id][paymentId] = data;
+        appendHistory(state,id,payload.expenseId,user,createdAt,{type:'payment',paymentId,amountCents:data.amountCents,fromMemberId:data.fromMemberId,toMemberId:data.toMemberId,note:data.note});return paymentId;
       }); },
       async reversePayment(id, paymentId) { return mutate((state, user, createdAt) => {
         const payment = state.payments[id]?.[paymentId];
         if (!payment || payment.type !== "payment" || payment.reversedBy) throw new Error("这条还款记录不可再次撤销。");
         const expense = state.expenses[id][payment.expenseId]; receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
         const reversalId = newId();
+        ensureHistory(state,id,payment.expenseId);
         state.payments[id][reversalId] = { ...payment, type: "reversal", reversesId: paymentId, reversedBy: null, date: today(), note: "撤销还款确认", createdByUid: user.uid, createdAt };
         payment.reversedBy = reversalId; expense.repaid[payment.fromMemberId] -= payment.amountCents; expense.lastPaymentId = reversalId;
+        appendHistory(state,id,payment.expenseId,user,createdAt,{type:'payment-reversed',paymentId:reversalId,amountCents:payment.amountCents,fromMemberId:payment.fromMemberId,toMemberId:payment.toMemberId});
         return reversalId;
       }); },
       async reverseExpense(id, expenseId) { return mutate((state, user, timestamp) => {
         const expense = state.expenses[id]?.[expenseId]; if (!expense) throw new Error("费用不存在。");
         receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
         if (Object.values(expense.repaid).some(value => value !== 0)) throw new Error("请先撤销关联的还款确认，再撤销费用。");
+        ensureHistory(state,id,expenseId);
         expense.status = "reversed"; expense.reversedAt = timestamp;
+        appendHistory(state,id,expenseId,user,timestamp,{type:'reversed'});
       }); },
       async createInvite(id, memberId) { return mutate((state, user, createdAt) => {
         const ledger = state.ledgers[id]; owner(ledger, user); const member = state.members[id]?.[memberId];

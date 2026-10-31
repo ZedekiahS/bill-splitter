@@ -6,7 +6,8 @@ import { createStore } from './ledger-store.mjs';
 import { parseMoney, formatMoney, splitShares, consumptionShares, memberBalances, remainingFor, settlementText } from './ledger-core.mjs';
 import { openExpenseEditor } from './expense-entry.mjs';
 import { dueOccurrences } from './expense-features.mjs';
-import { receiptBlob } from './receipt-files.mjs';
+import { receiptMarkup,openReceiptViewer,closeReceiptViewer } from './receipt-viewer.mjs';
+import { historyMarkup } from './expense-history-view.mjs';
 import featureMessages from './feature-messages.mjs';
 import { bindExpenseSearch } from './expense-search.mjs';
 import { createAutoSync } from './auto-sync.mjs';
@@ -123,12 +124,15 @@ async function syncChanges(){
   if(!changed)return;
   if(id!==oldId){closeDialog();state.search='';state.filter='all';state.expenseTab='records';state.showArchived=false;}
   const scrollY=window.scrollY;
+  const expandedHistory=new Set([...document.querySelectorAll("details[data-history-id][open]")].map(row=>row.dataset.historyId));
   render();
   if($('#action-dialog').open)dialogRefresh?.();
+  for(const row of document.querySelectorAll('details[data-history-id]'))row.open=expandedHistory.has(row.dataset.historyId);
   window.scrollTo({top:scrollY,behavior:'instant'});
   const url=new URL(location.href);if(id)url.searchParams.set('ledger',id);else url.searchParams.delete('ledger');history.replaceState(null,'',url);
 }
 function clearSession(){
+  closeReceiptViewer();
   ++dataGeneration;loadingData=0;autoSync?.stop();closeDialog();
   state.store=null;state.snapshot=null;state.ledgers=[];state.invitation=null;
   for(const selector of ['#primary-nav','#mobile-nav','#ledger-nav','#ledger-picker'])$(selector).innerHTML='';
@@ -203,10 +207,11 @@ function updateExpenseResults() {
 function expensesView() {
   const filtered=filteredExpenses();
   const due=dueOccurrences(state.snapshot.templates || [],state.snapshot.occurrences || [],localDate());
-  const tabs=`<div class="expense-tabs" role="group" aria-label="${t('账单内容')}">${[['records',t('已记账')],['drafts',t('待确认')+(due.length?` (${due.length})`:'')],['templates',t('模板与周期')]].map(([id,label])=>`<button class="chip ${state.expenseTab===id?'active':''}" data-expense-tab="${id}" aria-pressed="${state.expenseTab===id}">${label}</button>`).join('')}</div>`;
+  const tabs=`<div class="expense-tabs" role="group" aria-label="${t('账单内容')}">${[['records',t('已记账')],['drafts',t('待确认')+(due.length?` (${due.length})`:'')],['templates',t('模板与周期')],['history',t('操作历史')]].map(([id,label])=>`<button class="chip ${state.expenseTab===id?'active':''}" data-expense-tab="${id}" aria-pressed="${state.expenseTab===id}">${label}</button>`).join('')}</div>`;
   const top=heading(t('每一笔，都有来处。'),t('查看共同开销，也看清自己承担的部分。'),newExpenseButton())+tabs;
   if(state.expenseTab==='templates')return top+templatesView();
   if(state.expenseTab==='drafts')return top+draftsView(due);
+  if(state.expenseTab==='history')return top+`<section class="panel">${historyMarkup(state.snapshot)}</section>`;
   return top+
   `<div class="filter-bar"><div class="filter-chips">${[['all',t('全部')],['mine',t('我垫付')],['participating',t('我参与')],['open',t('未结清')]].map(([id,label])=>`<button class="chip ${state.filter===id?'active':''}" data-filter="${id}" aria-pressed="${state.filter===id}">${label}</button>`).join('')}</div><label class="search-field">${icon('search')}<input id="expense-search" type="search" placeholder="${t('搜索账单')}" aria-label="${t('搜索账单')}" value="${escape(state.search)}" aria-controls="expense-results"></label></div><div class="expense-results-summary"><p id="expense-result-count" role="status" aria-live="polite">${t('{count}笔账单',{count:filtered.length})}</p><button id="clear-expense-filters" class="text-link" data-action="clear-expense-filters" ${hasExpenseFilters()?'':'hidden'}>${t('清除筛选')}</button></div><section id="expense-results" class="panel">${expenseResults(filtered)}</section>`;
 }
@@ -236,7 +241,7 @@ function membersView() {
 
 function openDialog(title,body,footer='',wide=false) {
   dialogRefresh=null;
-  const d=$('#action-dialog'); d.classList.toggle('wide-dialog',wide);
+  const d=$('#action-dialog'); d.classList.remove('history-dialog');d.classList.toggle('wide-dialog',wide);
   $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
 }
@@ -268,26 +273,27 @@ function newExpense(options={}) {
   if(!state.snapshot)return newLedger();
   openExpenseEditor({snapshot:state.snapshot,user:state.store.currentUser,isOwner:owner(),openDialog,submitForm,errorSlot,formError,today:localDate(),onSave:async(payload,settings)=>{
     if(settings.templateMode)await state.store.saveTemplate(state.snapshot.ledger.id,payload,settings.templateId);
+    else if(settings.expenseId)await state.store.updateExpense(state.snapshot.ledger.id,settings.expenseId,payload);
     else await state.store.addExpense(state.snapshot.ledger.id,payload);
     state.view='expenses';state.expenseTab=settings.templateMode?'templates':'records';state.search='';state.filter='all';
-    await finishSave(settings.templateMode?t('模板已保存。'):t('账单已保存，每个人的份额都记好了。'));
+    await finishSave(settings.expenseId?t('更正已保存，操作历史已更新。'):settings.templateMode?t('模板已保存。'):t('账单已保存，每个人的份额都记好了。'));
   }},options);
 }
 
 function expenseExtras(expense) {
-  const items=expense.items || [],receipts=expense.receipts || [],urls=[];
-  const attachments=receipts.map(receipt=>{
-    try {const url=typeof receipt.url==='string'&&/^\/api\/ledgers\/[a-f0-9-]+\/receipts\/[a-f0-9-]+$/.test(receipt.url)?receipt.url:URL.createObjectURL(receiptBlob(receipt));if(url.startsWith('blob:'))urls.push(url);return `<a class="receipt-row" href="${url}" download="${escape(receipt.name)}">${receipt.type.startsWith('image/')?`<img src="${url}" alt="${escape(receipt.name)}">`:icon('receipt')}<span>${escape(receipt.name)}<small>${t('下载收据')}</small></span></a>`;}
-    catch{return `<p class="form-hint">${escape(receipt.name)} · ${t('收据文件无效，无法打开。')}</p>`;}
-  }).join('');
-  if(urls.length)$('#action-dialog').addEventListener('close',()=>urls.forEach(url=>URL.revokeObjectURL(url)),{once:true});
+  const items=expense.items || [],attachments=receiptMarkup(expense.receipts);
   return `${expense.sourceDate?`<p class="form-hint">${t('周期账单 · {date}',{date:escape(expense.sourceDate)})}</p>`:''}${items.length?`<section class="detail-items"><h3>${t('消费明细')}</h3>${items.map(item=>`<div class="detail-item"><strong>${escape(item.title)}</strong><strong>${money(item.amountCents)}</strong><small>${item.memberIds.map(id=>escape(memberName(id))).join('、')}</small></div>`).join('')}</section>`:''}${expense.note?`<section class="detail-note"><h3>${t('备注')}</h3><p>${escape(expense.note)}</p></section>`:''}${attachments?`<section class="receipt-gallery"><h3>${t('收据')}</h3>${attachments}</section>`:''}`;
 }
 function showExpense(id) {
   const e=state.snapshot.expenses.find(e=>e.id===id);if(!e)return;
   const shares=Object.entries(consumptionShares(e)).map(([id,cents])=>{const isPayer=id===e.payerMemberId,remaining=remainingFor(e,id),paid=e.repaid?.[id]||0;return `<div class="member-row">${avatar(memberName(id))}<div class="member-info"><strong>${escape(memberName(id))}${isPayer?t(' · 垫付人'):''}</strong><small>${isPayer?t('自己的消费份额'):paid?`${t('已还')} ${money(paid)}`:t('尚未还款')}</small></div><div class="expense-amount"><strong>${money(cents)}</strong><small>${isPayer?t('自付'):`${t('待付')} ${money(remaining)}`}</small></div>${!isPayer&&remaining>0&&e.status==='active'&&canReceive(e)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(id)}">${t('收款')}</button>`:''}</div>`;}).join('');
-  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>${e.status==='active'&&(owner()||e.createdByUid===state.store.currentUser.uid)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
+  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button><button class="text-link" data-expense-history="${escape(e.id)}">${t('操作历史')}</button>${e.status==='active'&&canReceive(e)?`<button class="button secondary" data-edit-expense="${escape(e.id)}">${t('补充与更正')}</button>`:''}${e.status==='active'&&canReceive(e)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
   dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showExpense(id);$('.dialog-body').scrollTop=top;};
+}
+function showHistory(id) {
+  openDialog(t('操作历史'),historyMarkup(state.snapshot,id),`<button class="button secondary" data-expense="${escape(id)}">${t('返回账单')}</button>`,true);
+  $('#action-dialog').classList.add('history-dialog');
+  dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showHistory(id);$('.dialog-body').scrollTop=top;};
 }
 function paymentDialog(expenseId,fromId) {
   const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
@@ -357,6 +363,9 @@ function accountDialog() {
 
 document.addEventListener('click', async event => {
   const el=event.target.closest('button,a');if(!el)return;
+  if(el.dataset.viewReceipt){openReceiptViewer(el.dataset.viewReceipt,el.dataset.receiptName,el);return;}
+  if(el.dataset.editExpense){const expense=state.snapshot.expenses.find(row=>row.id===el.dataset.editExpense);if(expense)newExpense({initial:expense,expenseId:expense.id});return;}
+  if(el.dataset.expenseHistory){showHistory(el.dataset.expenseHistory);return;}
   if (el.dataset.view) {state.view=el.dataset.view;location.hash=state.view;render();return;}
   if (el.dataset.ledger) {await selectLedger(el.dataset.ledger);return;}
   if (el.dataset.expense) {showExpense(el.dataset.expense);return;}

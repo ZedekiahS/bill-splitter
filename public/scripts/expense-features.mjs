@@ -3,7 +3,7 @@ import { assertCents, splitShares, validateDate } from './ledger-core.mjs';
 const MAX_CENTS = BigInt(Number.MAX_SAFE_INTEGER);
 const RECEIPT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const DAY_MS = 86400000;
-const MAX_RECEIPT_BYTES = 204800;
+const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 
 function nonemptyText(value, limit, message) {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > limit) throw new Error(message);
@@ -39,7 +39,7 @@ function receiptData(receipt) {
   const name = nonemptyText(receipt.name, 120, '收据文件名不能为空，且不能超过 120 个字。');
   const { type, size, dataUrl } = receipt;
   if (!RECEIPT_TYPES.has(type)) throw new Error('收据仅支持 JPG、PNG、WebP 或 PDF。');
-  if (!Number.isInteger(size) || size < 1 || size > MAX_RECEIPT_BYTES) throw new Error('每份收据不能超过 200 KB。');
+  if (!Number.isInteger(size) || size < 1 || size > MAX_RECEIPT_BYTES) throw new Error('每份收据不能超过 2 MB。');
   const prefix = `data:${type};base64,`;
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith(prefix)) throw new Error('收据文件无效，请重新选择。');
   const encoded = dataUrl.slice(prefix.length);
