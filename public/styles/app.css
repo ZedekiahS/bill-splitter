@@ -594,3 +594,9 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
   .entry-extras input[type="file"] { width: 100%; font-size: 12px; }
   .receipt-gallery > a, .receipt-gallery > button { max-width: calc(50% - 6px); }
 }
+
+.archived-ledgers-link { margin: 14px 10px; font-size: 12px; }
+.ledger-archive-status { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.ledger-tools { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.ledger-tools h4, .ledger-tools p { margin: 0; }
+#saved-drafts .plan-info { overflow-wrap: anywhere; }

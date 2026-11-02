@@ -75,6 +75,12 @@ They demonstrate the claim and approval flow, not cross-device sharing.
   repayments cannot be reversed until those repayments are reversed.
 - A settlement statement that can be copied or downloaded as text. The app does
   not send it, transfer money, or treat the statement as a payment receipt.
+- Incomplete expenses, corrections and templates recover from device-local drafts,
+  including split inputs and attachments. Drafts are isolated by account and ledger.
+- Members can download expense CSV, ledger JSON or a complete ZIP containing
+  financial records, history and attachment files. The creator can archive a ledger
+  as read-only and restore it later; archiving never cancels outstanding debt.
+  See [the versioned export format](docs/ledger-export-format.md).
 
 Amounts use integer cents. Percentage inputs support two decimal places;
 unassigned percentages are covered by the payer and rounding preserves the
@@ -116,13 +122,13 @@ npm test
 npm run test:api
 ```
 
-All 173 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 182 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
 regressions, 24 recurring/item/attachment checks, 13 feature-storage checks,
 7 shared-session UI regressions, 6 API-client retry/error checks, and 5 automatic
-synchronization scheduling checks.
-The 37 PostgreSQL API tests exercise real authenticated transactions, permissions,
-concurrency and private files, including 24 scenarios through an actual HTTP
+synchronization scheduling checks, 6 draft persistence checks and 3 export checks.
+The 41 PostgreSQL API tests exercise real authenticated transactions, permissions,
+concurrency and private files, including 28 scenarios through an actual HTTP
 listener. They reset only their dedicated test database and run sequentially.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.
@@ -137,3 +143,6 @@ Automatic synchronization is covered in [the follow-up review](docs/review/auto-
 
 Expense corrections, history and attachment workflows are documented in
 [the October 31 review](docs/review/expense-history-2026-10-31.md).
+
+Draft recovery, export and ledger archiving are covered in
+[the November 2 review](docs/review/drafts-export-2026-11-02.md).

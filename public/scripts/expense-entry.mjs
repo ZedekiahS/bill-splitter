@@ -3,6 +3,7 @@ import { parseMoney, formatMoney, splitShares, consumptionShares } from './ledge
 import { itemizedShares } from './expense-features.mjs';
 import { readReceiptFile } from './receipt-files.mjs';
 import { receiptMarkup } from './receipt-viewer.mjs';
+import { draftWriter } from './expense-drafts.mjs';
 
 export function openExpenseEditor(context, options = {}) {
   const { snapshot:s, user, isOwner, openDialog, submitForm, errorSlot, formError, onSave, today } = context;
@@ -19,9 +20,11 @@ export function openExpenseEditor(context, options = {}) {
   const me=s.members.find(m=>m.uid===user.uid), initial=options.initial || {}, templateMode=Boolean(options.templateMode), recurring=Boolean(options.occurrence);
   const editing=Boolean(options.expenseId),financialLocked=editing&&Object.values(initial.repaid||{}).some(value=>value>0);
   const availableMembers=recurring?s.members.filter(m=>Object.hasOwn(initial.shares,m.id)):s.members;
-  let splitType=initial.items?.length?'items':initial.shares?'amount':'equal', amountDraftInitialized=Boolean(initial.shares);
-  let itemDrafts=(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds]}));
-  let receipts=editing?[...(initial.receipts||[])]:[], readingReceipts=false;
+  const recovered=context.draft?.record?.form;
+  let saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
+  let splitType=recovered?.splitType||(initial.items?.length?'items':initial.shares?'amount':'equal'), amountDraftInitialized=recovered?.amountDraftInitialized??Boolean(initial.shares);
+  let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds]}));
+  let receipts=recovered?.receipts||(editing?[...(initial.receipts||[])]:[]), readingReceipts=false;
   const initialShares=initial.shares?consumptionShares(initial):{};
   const defaultCount=Math.min(s.members.length,8);
   const payerOptions=s.members.filter(m=>owner()||m.uid===state.store.currentUser.uid).map(m=>`<option value="${escape(m.id)}" ${m.id===me?.id?'selected':''}>${escape(m.name)}${m.id===me?.id?t('（我）'):''}</option>`).join('');
@@ -68,8 +71,8 @@ export function openExpenseEditor(context, options = {}) {
     form.querySelectorAll('[data-split]').forEach(button=>{button.classList.toggle('active',button.dataset.split===splitType);button.setAttribute('aria-pressed',String(button.dataset.split===splitType));});
     if(itemMode&&!itemDrafts.length){itemDrafts=[{title:'',amount:'',memberIds:availableMembers.slice(0,8).map(m=>m.id)}];renderItems();}
   }
-  $('#add-item').addEventListener('click',()=>{itemDrafts=readItemDrafts();if(itemDrafts.length>=8)return;itemDrafts.push({title:'',amount:'',memberIds:availableMembers.slice(0,8).map(m=>m.id)});renderItems();$('#item-list').lastElementChild.querySelector('input').focus();preview();});
-  $('#item-list').addEventListener('click',event=>{const button=event.target.closest('[data-remove-item]');if(!button)return;itemDrafts=readItemDrafts();itemDrafts.splice(Number(button.dataset.removeItem),1);renderItems();$('#add-item').focus();preview();});
+  $('#add-item').addEventListener('click',()=>{itemDrafts=readItemDrafts();if(itemDrafts.length>=8)return;itemDrafts.push({title:'',amount:'',memberIds:availableMembers.slice(0,8).map(m=>m.id)});renderItems();$('#item-list').lastElementChild.querySelector('input').focus();preview();saveDraft();});
+  $('#item-list').addEventListener('click',event=>{const button=event.target.closest('[data-remove-item]');if(!button)return;itemDrafts=readItemDrafts();itemDrafts.splice(Number(button.dataset.removeItem),1);renderItems();$('#add-item').focus();preview();saveDraft();});
   renderItems();
   function renderReceipts(){
     $('#receipt-list').innerHTML=receipts.map((receipt,i)=>`<div class="receipt-edit-row">${receiptMarkup([receipt])}<button type="button" class="text-link danger-link" data-remove-receipt="${i}" aria-label="${t('移除收据 {name}',{name:escape(receipt.name)})}">${t('移除')}</button></div>`).join('');
@@ -78,7 +81,7 @@ export function openExpenseEditor(context, options = {}) {
     const input=$('#receipt-files');if(!files.length||readingReceipts)return;
     if(receipts.length+files.length>3){formError(t('最多添加 3 份收据。'));input.value='';return;}
     readingReceipts=true;saveButton.disabled=true;input.disabled=true;$('#receipt-status').textContent=t('正在处理收据…');
-    try{const added=[];for(const file of files)added.push(await readReceiptFile(file));if(!form.isConnected)return;receipts.push(...added);renderReceipts();$('#form-error').hidden=true;}
+    try{const added=[];for(const file of files)added.push(await readReceiptFile(file));if(!form.isConnected)return;receipts.push(...added);renderReceipts();saveDraft();$('#form-error').hidden=true;}
     catch(error){if(form.isConnected)formError(errorMessage(error));}
     finally{readingReceipts=false;if(form.isConnected){saveButton.disabled=false;input.disabled=false;input.value='';$('#receipt-status').textContent='';}}
   }
@@ -89,7 +92,7 @@ export function openExpenseEditor(context, options = {}) {
   dropzone?.addEventListener('drop',event=>{event.preventDefault();dropzone.classList.remove('dragging');addReceipts([...event.dataTransfer.files]);});
   if(!templateMode)form.addEventListener('paste',event=>{const files=[...(event.clipboardData?.files||[])].filter(file=>file.type.startsWith('image/'));if(files.length){event.preventDefault();form.querySelector('.entry-extras').open=true;addReceipts(files);}});
   if(!templateMode)renderReceipts();
-  $('#receipt-list')?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-receipt]');if(button){receipts.splice(Number(button.dataset.removeReceipt),1);renderReceipts();}});
+  $('#receipt-list')?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-receipt]');if(button){receipts.splice(Number(button.dataset.removeReceipt),1);renderReceipts();saveDraft();}});
   const draftValues=attribute=>Object.fromEntries([...form.querySelectorAll(`[${attribute}]`)].map(input=>[input.getAttribute(attribute),input.value]));
   function calculate() {
     if(splitType==='items') {
@@ -147,7 +150,7 @@ export function openExpenseEditor(context, options = {}) {
     }
     splitType=button.dataset.split;
     form.querySelectorAll('[data-split]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});
-    updateMode();$('#form-error').hidden=true;preview();
+    updateMode();$('#form-error').hidden=true;preview();saveDraft();
   }));
   form.addEventListener('submit',e=>submitForm(e,async data=>{
     if(readingReceipts)throw new Error('收据正在处理，请稍候再保存。');
@@ -156,9 +159,46 @@ export function openExpenseEditor(context, options = {}) {
     if(editing){payload.expectedVersion=initial.version||1;payload.changeReason=data.get('changeReason');payload.receipts=receipts.map(file=>file.id?{id:file.id}:file);}
     if(templateMode){payload.frequency=data.get('frequency');payload.startDate=payload.frequency==='none'?null:data.get('startDate');}
     if(recurring){payload.sourceTemplateId=initial.id;payload.sourceDate=options.occurrence.date;}
-    await onSave(payload,options);
+    if(context.draft){
+      const signature=JSON.stringify([options.expenseId,options.templateMode,options.templateId,payload]);
+      if(attempt?.signature!==signature)attempt={signature,key:crypto.randomUUID()};
+      await saveDraft(true);
+    }
+    await onSave(payload,{...options,draftRequestKey:attempt?.key,draftCommitted:async()=>{draftComplete=true;await writer?.clear();}});
   }));
+  if(recovered){
+    for(const [name,value] of Object.entries(recovered.fields||{}))if(form.elements[name]&&name!=='participant')form.elements[name].value=value;
+    form.querySelectorAll('[name="participant"]').forEach(input=>input.checked=recovered.participants.includes(input.value));
+    for(const attribute of ['data-percent','data-share-amount'])form.querySelectorAll(`[${attribute}]`).forEach(input=>{input.value=recovered[attribute]?.[input.getAttribute(attribute)]??'';});
+    if(templateMode)form.elements.frequency.dispatchEvent(new Event('change'));
+  }
   updateMode();
   if(financialLocked)form.querySelectorAll('[name="payer"],[name="participant"],[data-split],[data-percent],[data-share-amount],[data-item-title],[data-item-amount],[data-item-member],[data-remove-item],#add-item').forEach(input=>input.disabled=true);
   preview();
+  const capture=()=>({splitType,amountDraftInitialized,items:readItemDrafts(),receipts,
+    fields:Object.fromEntries(['amount','title','payer','date','note','changeReason','frequency','startDate'].filter(name=>form.elements[name]).map(name=>[name,form.elements[name].value])),
+    participants:[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value),
+    'data-percent':draftValues('data-percent'),'data-share-amount':draftValues('data-share-amount')});
+  const baseline=JSON.stringify(capture());
+  let writer,draftTouched=Boolean(recovered);
+  if(context.draft){
+    const draft=context.draft;
+    form.querySelector('.form-actions').insertAdjacentHTML('beforebegin','<p id="draft-save-status" class="form-hint" role="status"></p>');
+    const status=$('#draft-save-status');
+    if(recovered)status.textContent=t('已恢复草稿');
+    const rawOptions={...options,initial:{...initial,history:undefined}};
+    writer=draftWriter(draft.store,draft.record||{key:draft.key},(state,error)=>{
+      status.textContent=state==='saved'?t('草稿已保存在此设备'):state==='saving'?t('正在保存草稿…'):t(error?.message==='草稿已在另一个页面更新，请保留当前输入后重新打开。'?error.message:'无法保存草稿，请先不要关闭页面。');
+    });
+    saveDraft=(force=false)=>{
+      if(draftComplete||!form.isConnected)return writer.flush();
+      const value=capture();
+      if(force!==true&&!draftTouched&&JSON.stringify(value)===baseline)return writer.flush();
+      draftTouched=true;
+      return writer.save({key:draft.key,scope:draft.scope,options:rawOptions,attempt,form:value,title:value.fields.title||t('未命名账单')});
+    };
+    form.addEventListener('input',saveDraft);form.addEventListener('change',saveDraft);
+    form.querySelector('[data-action="close-dialog"]').textContent=t('稍后继续');
+  }
+  return {flush:saveDraft};
 }

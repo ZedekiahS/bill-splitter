@@ -5,6 +5,7 @@ import {database,migrate} from '../server/database.mjs';
 import {buildApp} from '../server/app.mjs';
 import {splitShares,memberBalances,settlementText,remainingFor} from '../public/scripts/ledger-core.mjs';
 import {itemizedShares,dueOccurrences} from '../public/scripts/expense-features.mjs';
+import {unzip} from './zip-helper.mjs';
 
 const target=new URL(process.env.TEST_DATABASE_URL||'http://missing');
 if(!['postgres:','postgresql:'].includes(target.protocol)||!['127.0.0.1','localhost'].includes(target.hostname)||!target.pathname.endsWith('_test'))throw new Error('Use a disposable loopback PostgreSQL database ending _test.');
@@ -295,4 +296,57 @@ test('item corrections and payer reassignment preserve history and transfer edit
   assert.equal((await post(chen,f.id,'updateExpense',[id,{...original,payerMemberId:f.c,expectedVersion:row.version,changeReason:'改变已收款明细'}])).status,400);
   assert.equal((await post(alice,f.id,'updateExpense',[id,{...supplement,payerMemberId:f.b,expectedVersion:row.version}])).status,400);
   assert.equal((await consistent(f)).expenses[0].createdByUid,bob.uid);
+});
+
+test('archived ledgers remain readable but every financial and membership mutation is blocked',async()=>{
+  const f=await trio(),original=expense('owner',{owner:5000,[f.b]:5000},10000),e=await command(alice,f.id,'addExpense',[original]);
+  const payment=await command(alice,f.id,'recordPayment',[{expenseId:e,fromMemberId:f.b,amountCents:1000}]);
+  const template=await command(alice,f.id,'saveTemplate',[{...original,frequency:'weekly',startDate:'2026-10-01'}]);
+  const member=await command(alice,f.id,'addMember',['待加入']),token=await command(alice,f.id,'createInvite',[member]);
+  await good(outsider,'POST',`/api/invites/${token}/commands`,{type:'claim'});
+  const before=await snapshot(alice,f.id);
+  assert.equal((await post(bob,f.id,'setLedgerStatus',['archived'])).status,403);
+  await command(alice,f.id,'setLedgerStatus',['archived']);
+  const calls=[['addMember',['禁止']],['addExpense',[original]],['updateExpense',[e,{...original,note:'不可改',expectedVersion:2,changeReason:'试改'}]],['recordPayment',[{expenseId:e,fromMemberId:f.b,amountCents:100}]],['reversePayment',[payment]],['reverseExpense',[e]],['saveTemplate',[{...original,frequency:'none'}]],['setTemplateStatus',[template,'paused']],['skipOccurrence',[template,'2026-10-01']],['createInvite',[member]]];
+  for(const [type,args] of calls){const r=await post(alice,f.id,type,args);assert.equal(r.status,400,type);assert.match(r.data.error.message,/已归档/,type);}
+  for(const body of [{type:'claim'},{type:'approve',uid:outsider.uid}]){
+    const r=await request(body.type==='claim'?outsider:alice,'POST',`/api/invites/${token}/commands`,body);assert.equal(r.status,400);assert.match(r.data.error.message,/已归档/);
+  }
+  const after=await consistent(f);assert.deepEqual(after.expenses,before.expenses);assert.deepEqual(after.payments,before.payments);assert.equal(after.ledger.status,'archived');
+  assert.equal(after.ledger.statusHistory[0].actorUid,alice.uid);
+  assert.equal((await post(bob,f.id,'setLedgerStatus',['active'])).status,403);
+  await command(alice,f.id,'setLedgerStatus',['active']);await command(bob,f.id,'addExpense',[expense(f.b,{[f.b]:100},100)]);
+  assert.equal((await consistent(f)).expenses.length,2);
+});
+
+test('archiving serializes with another member adding an expense and restoration retains schedules',async()=>{
+  const f=await trio(),original=expense('owner',{owner:100},100),template=await command(alice,f.id,'saveTemplate',[{...original,frequency:'monthly',startDate:'2026-10-01'}]);
+  const [archive,add]=await Promise.all([post(alice,f.id,'setLedgerStatus',['archived']),post(bob,f.id,'addExpense',[expense(f.b,{[f.b]:100},100)])]);
+  assert.equal(archive.status,200);assert.ok([200,400].includes(add.status));
+  let s=await consistent(f);assert.equal(s.ledger.status,'archived');assert.equal(s.expenses.length,add.status===200?1:0);
+  assert.equal((await post(bob,f.id,'addExpense',[expense(f.b,{[f.b]:100},100)])).status,400);
+  await command(alice,f.id,'setLedgerStatus',['active']);s=await consistent(f);assert.equal(s.templates[0].id,template);assert.equal(s.templates[0].status,'active');assert.equal(s.templates[0].startDate,'2026-10-01');
+  assert.deepEqual(s.ledger.statusHistory.map(row=>row.status),['archived','active']);
+});
+
+test('members export complete private ZIPs with old receipts and outsiders cannot download them',async()=>{
+  const f=await trio(),original=expense('owner',{owner:100,[f.b]:100},200,{receipts:[pdf()]}),id=await command(alice,f.id,'addExpense',[original]);
+  await command(alice,f.id,'updateExpense',[id,{...original,receipts:[],note:'移除当前附件',expectedVersion:1,changeReason:'凭据已留档'}]);
+  await command(alice,f.id,'setLedgerStatus',['archived']);
+  const response=await fetch(`${base}/api/ledgers/${f.id}/export`,{headers:{cookie:bob.cookie}});
+  assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/application\/zip/);assert.equal(response.headers.get('cache-control'),'no-store');
+  const files=await unzip(Buffer.from(await response.arrayBuffer())),data=JSON.parse(files.get('ledger.json'));
+  assert.equal(data.schemaVersion,1);assert.equal(data.ledger.status,'archived');assert.equal(data.expenses[0].history.length,2);assert.equal(data.expenses[0].receipts.length,0);
+  const file=data.expenses[0].history[0].after.receipts[0];assert.equal(files.get(file.path).toString(),Buffer.from(pdf().dataUrl.split(',')[1],'base64').toString());
+  assert.ok(files.has('shares.csv'));assert.ok(files.has('payments.csv'));assert.ok(files.has('ledger-status.csv'));
+  assert.equal(data.invites,undefined);assert.equal(data.claims,undefined);
+  assert.equal((await fetch(`${base}/api/ledgers/${f.id}/export`,{headers:{cookie:outsider.cookie}})).status,403);
+  assert.equal((await fetch(`${base}/api/ledgers/${f.id}/export`)).status,401);
+});
+
+test('a resumed draft retry after a new login returns the original expense without duplicating history',async()=>{
+  const f=await trio(),key=randomUUID(),args=[expense(f.b,{[f.b]:100},100)];
+  const id=await command(bob,f.id,'addExpense',args,key),otherSession=await login(bob);
+  assert.equal(await command(otherSession,f.id,'addExpense',args,key),id);
+  const s=await consistent(f);assert.equal(s.expenses.length,1);assert.equal(s.expenses[0].history.length,1);
 });

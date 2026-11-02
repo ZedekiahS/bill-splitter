@@ -1,12 +1,12 @@
 // Same-origin session cookies. No account ID or credential is accepted from UI payloads.
 const pending=new Map();
-export async function apiRequest(path,{method='GET',body}={}){
+export async function apiRequest(path,{method='GET',body,idempotencyKey}={}){
   const content=body===undefined?undefined:JSON.stringify(body),signature=method+path+(content||'');
   const headers={};
   if(method!=='GET'){
     headers['Content-Type']='application/json';headers['X-Bill-Splitter']='1';
     if(!pending.has(signature))pending.set(signature,crypto.randomUUID());
-    headers['Idempotency-Key']=pending.get(signature);
+    headers['Idempotency-Key']=idempotencyKey||pending.get(signature);
   }
   let response;
   try {response=await fetch(path,{method,headers,body:content,credentials:'same-origin',cache:'no-store',...(method==='GET'?{signal:AbortSignal.timeout(15000)}:{})});}
@@ -24,8 +24,9 @@ export const signOut=()=>apiRequest('/api/auth/logout',{method:'POST',body:{}});
 export function createApiStore(user){
   const post=(path,body)=>apiRequest(path,{method:'POST',body});
   const store={currentUser:user,mode:'api',listLedgers:()=>apiRequest('/api/ledgers'),loadLedger:id=>apiRequest(`/api/ledgers/${encodeURIComponent(id)}`),createLedger:payload=>post('/api/ledgers',payload),getInvite:token=>apiRequest(`/api/invites/${encodeURIComponent(token)}`),claimInvite:(token,payload)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'claim',...payload}),approveClaim:(token,uid)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'approve',uid})};
+  store.saveDraftCommand=(id,type,args,key)=>apiRequest(`/api/ledgers/${encodeURIComponent(id)}/commands`,{method:'POST',body:{type,args},idempotencyKey:key});
   store.listUpdates=()=>apiRequest('/api/ledger-updates');
-  for(const type of ['addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']){
+  for(const type of ['setLedgerStatus','addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']){
     store[type]=(id,...args)=>post(`/api/ledgers/${encodeURIComponent(id)}/commands`,{type,args});
   }
   return store;

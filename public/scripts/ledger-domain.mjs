@@ -23,12 +23,19 @@ function requireUser(user) {
 function readable(ledger, user) {
   if (!ledger || !ledger.memberUids.includes(user.uid)) throw new Error("你还不是该账本成员。认领申请须由管理员批准。");
 }
+function requireActive(ledger) {
+  if(ledger.status==="archived")throw new Error("账本已归档，请由创建者恢复后再修改。");
+}
+function writable(ledger, user) {
+  readable(ledger,user);
+  requireActive(ledger);
+}
 function owner(ledger, user) {
-  readable(ledger, user);
+  writable(ledger, user);
   if (ledger.ownerUid !== user.uid) throw new Error("只有账本管理员可以进行此操作。");
 }
 function receiver(ledger, expense, payer, user) {
-  readable(ledger, user);
+  writable(ledger, user);
   if (ledger.ownerUid !== user.uid && payer?.uid !== user.uid) throw new Error("只有收款人或账本管理员可以确认或撤销记录。");
   if (expense.status !== "active") throw new Error("这笔费用已撤销。");
 }
@@ -52,7 +59,7 @@ function expenseData(payload, members, uid, createdAt) {
 }
 
 function templateAccess(ledger, template, user) {
-  readable(ledger, user);
+  writable(ledger, user);
   if (!template || (ledger.ownerUid !== user.uid && template.createdByUid !== user.uid)) throw new Error("只有模板创建者或账本管理员可以管理此模板。");
 }
 function templateData(payload, members, user, timestamp, previous) {
@@ -124,12 +131,20 @@ export function createStateStore({read,mutate,user}) {
         state.members[id] = { owner: { name: text(payload.ownerName || user.displayName || "我", "成员名字"), uid: user.uid, createdAt, claimInviteId: null } };
         state.expenses[id] = {}; state.payments[id] = {}; return id;
       }); },
+      async setLedgerStatus(id,status) { return mutate((state,user,at)=>{
+        const ledger=state.ledgers[id];readable(ledger,user);
+        if(ledger.ownerUid!==user.uid)throw new Error('只有账本管理员可以进行此操作。');
+        if(!['active','archived'].includes(status))throw new Error('账本状态无效。');
+        if((ledger.status||'active')===status)return;
+        ledger.status=status;ledger.archivedAt=status==='archived'?at:null;
+        (ledger.statusHistory||=[]).push({status,at,actorUid:user.uid,actorName:Object.values(state.members[id]).find(m=>m.uid===user.uid)?.name||user.displayName});
+      }); },
       async addMember(id, name) { return mutate((state, user, createdAt) => {
         owner(state.ledgers[id], user); const memberId = newId();
         state.members[id][memberId] = { name: text(name, "成员名字"), uid: null, createdAt, claimInviteId: null }; return memberId;
       }); },
       async addExpense(id, payload) { return mutate((state, user, createdAt) => {
-        const ledger = state.ledgers[id]; readable(ledger, user);
+        const ledger = state.ledgers[id]; writable(ledger, user);
         const data = expenseData(payload, state.members[id], user.uid, createdAt);
         if (ledger.ownerUid !== user.uid && state.members[id][data.payerMemberId].uid !== user.uid) throw new Error("只能记录由自己垫付的费用。");
         requireSource(payload);
@@ -171,7 +186,7 @@ export function createStateStore({read,mutate,user}) {
         appendHistory(state,id,expenseId,user,timestamp,{type:'updated',reason,before,after});return expenseId;
       }); },
       async saveTemplate(id, payload, templateId) { return mutate((state, user, timestamp) => {
-        const ledger = state.ledgers[id]; readable(ledger, user);
+        const ledger = state.ledgers[id]; writable(ledger, user);
         state.templates[id] ||= {};
         const previous = templateId ? state.templates[id][templateId] : null;
         if (templateId) templateAccess(ledger, previous, user);
@@ -227,12 +242,14 @@ export function createStateStore({read,mutate,user}) {
       async getInvite(token) { const user = me(), invite = read().invites[token]; readableInvite(invite, user); return withId(token, invite); },
       async claimInvite(token, { displayName } = {}) { return mutate((state, user, createdAt) => {
         const invite = state.invites[token]; requireInvite(invite);
+        requireActive(state.ledgers[invite.ledgerId]);
         if (state.ledgers[invite.ledgerId].memberUids.includes(user.uid)) throw new Error("你已经是该账本成员。");
         if (!state.claims[token][user.uid]) state.claims[token][user.uid] = { uid: user.uid, displayName: text(displayName || user.displayName || "申请人", "名字"), status: "pending", createdAt };
         return withId(user.uid, state.claims[token][user.uid]);
       }); },
       async approveClaim(token, claimantUid) { return mutate((state, user) => {
         const invite = state.invites[token]; requireInvite(invite);
+        requireActive(state.ledgers[invite.ledgerId]);
         const ledger = state.ledgers[invite.ledgerId], member = state.members[invite.ledgerId][invite.memberId], claim = state.claims[token]?.[claimantUid];
         approval(ledger, member, invite, claim, claimantUid, user);
         ledger.memberUids.push(claimantUid); ledger.lastApprovedInviteId = token;

@@ -9,12 +9,17 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server/start.mjs",
     "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs",
-    "test": "node tests/bill-calculations.test.mjs && node tests/ledger-core.test.mjs && node tests/i18n.test.mjs && node tests/expense-search.test.mjs && node tests/expense-features.test.mjs && node tests/expense-features-store.test.mjs && node tests/invitation-navigation.test.mjs && node tests/api-client.test.mjs && node tests/auto-sync.test.mjs",
+    "test": "node tests/bill-calculations.test.mjs && node tests/ledger-core.test.mjs && node tests/i18n.test.mjs && node tests/expense-search.test.mjs && node tests/expense-features.test.mjs && node tests/expense-features-store.test.mjs && node tests/invitation-navigation.test.mjs && node tests/api-client.test.mjs && node tests/auto-sync.test.mjs && node tests/expense-drafts.test.mjs && node tests/ledger-export.test.mjs",
     "test:api": "node --env-file-if-exists=.env.test --test --test-concurrency=1 tests/api.test.mjs tests/api-scenarios.test.mjs"
   },
   "dependencies": {
     "@fastify/static": "^10.1.8",
     "fastify": "^5.12.7",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.7",
+    "yauzl": "^3.4.0"
   }
 }

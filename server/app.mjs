@@ -3,6 +3,7 @@ import staticFiles from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { authService,HttpError } from './auth.mjs';
 import { ledgerService } from './ledgers.mjs';
+import { exportStream } from './ledger-export.mjs';
 
 export async function buildApp({pool,origins,production=false,registration=true,trustProxy=false,logger=false}){
   const allowed=new Set(origins);
@@ -46,6 +47,12 @@ export async function buildApp({pool,origins,production=false,registration=true,
   app.get('/api/ledgers',request=>ledgers.list(request.user));
   app.get('/api/ledger-updates',request=>ledgers.updates(request.user));
   app.post('/api/ledgers',request=>result(ledgers.create(request.user,request.body,request.headers['idempotency-key'])));
+  app.get('/api/ledgers/:id/export',async(request,reply)=>{
+    const snapshot=await ledgers.get(request.user,request.params.id);
+    const archive=exportStream(snapshot,id=>ledgers.receipt(request.user,request.params.id,id));
+    reply.header('Content-Type','application/zip').header('Content-Disposition',`attachment; filename="ledger.zip"; filename*=UTF-8''${encodeURIComponent(archive.fileName).replace(/'/g,'%27')}`);
+    return reply.send(archive.stream);
+  });
   app.get('/api/ledgers/:id',request=>ledgers.get(request.user,request.params.id));
   app.post('/api/ledgers/:id/commands',request=>result(ledgers.command(request.user,request.params.id,request.body,request.headers['idempotency-key'])));
   app.get('/api/invites/:token',request=>ledgers.invitation(request.user,request.params.token));

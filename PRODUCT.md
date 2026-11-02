@@ -25,6 +25,17 @@ People sharing expenses. The current implementation targets friends, roommates a
 - Saved-expense corrections require payer/owner permission and a reason. Effective repayments lock financial fields until reversed; metadata and receipts remain editable. Conflicting versions never silently overwrite.
 - Expense history preserves creation, corrections, payment confirmations and reversals with actors/times and attachment versions. Unknown legacy facts remain unknown. This is expense history, not a ledger-membership administration audit.
 - Up to three private attachments per expense, each stored at up to 2 MiB. Images up to 10 MiB can be compressed locally; no OCR or server-side original-image archive.
+- Unsubmitted expense, correction and template drafts use device-local IndexedDB,
+  scoped by account, ledger and editor identity. They are not shared with members
+  or synchronized across devices; clearing site storage removes them. Storage
+  failures are shown at the form, never disguised as successful saving.
+- Saved ledgers have a versioned export structure: CSV details, JSON records and
+  ZIP with current/historical attachment files. Export excludes authentication and
+  invitation secrets. Import is not implemented; export is not a database backup.
+- Only the ledger creator can archive/restore the shared ledger. Archive blocks
+  all financial, member and template writes on the server while preserving read
+  and export access and all unpaid balances. Restoration reveals unconfirmed
+  recurring periods again, including periods that elapsed while archived.
 - No production deployment was requested for this review.
 
 ## Brand Commitments

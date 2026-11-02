@@ -11,6 +11,8 @@ import { historyMarkup } from './expense-history-view.mjs';
 import featureMessages from './feature-messages.mjs';
 import { bindExpenseSearch } from './expense-search.mjs';
 import { createAutoSync } from './auto-sync.mjs';
+import {createDraftStore,draftScope,draftKey} from './expense-drafts.mjs';
+import {ledgerExport,exportFileName} from './ledger-export.mjs';
 
 registerMessages(messages);
 registerMessages(accountMessages);
@@ -21,6 +23,8 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp
 const params = new URLSearchParams(location.search);
 const demo = params.get('demo') === '1';
 const state = { store: null, ledgers: [], snapshot: null, view: location.hash.slice(1) || 'overview', filter: 'all', search: '', expenseTab:'records', showArchived:false, starting: true, startupError: null, invitation: null, claimSubmitted: false };
+const draftStore=createDraftStore();
+let activeEditor=null,editorRequest=0;
 let dataGeneration=0,loadingData=0,saving=0,syncSignature=null,autoSync=null,dialogRefresh=null;
 const views = [{id:'overview',name:'总览',icon:'home'},{id:'expenses',name:'账单',icon:'receipt'},{id:'settlements',name:'结算',icon:'arrows'},{id:'members',name:'成员',icon:'people'}];
 const paths = {
@@ -42,7 +46,8 @@ const member = id => state.snapshot?.members.find(m => m.id === id);
 const memberName = id => member(id)?.name || t('成员');
 const mine = () => state.snapshot?.members.find(m => m.uid === state.store.currentUser.uid);
 const owner = () => state.snapshot?.ledger.ownerUid === state.store.currentUser.uid;
-const canReceive = expense => owner() || member(expense.payerMemberId)?.uid === state.store.currentUser.uid;
+const archived = () => state.snapshot?.ledger.status==='archived';
+const canReceive = expense => !archived()&&(owner() || member(expense.payerMemberId)?.uid === state.store.currentUser.uid);
 const activeExpenses = () => state.snapshot.expenses.filter(e => e.status !== 'reversed');
 const outstanding = expense => Object.keys(expense.shares).filter(id => id !== expense.payerMemberId).reduce((n,id) => n + remainingFor(expense,id),0);
 const localDate = () => {if(!demo)return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -59,13 +64,14 @@ function errorMessage(error) {
 }
 function empty(title, text, action='') { return `<div class="empty-state">${icon('book')}<h3>${escape(title)}</h3><p>${escape(text)}</p>${action}</div>`; }
 function heading(title, subtitle, actions='') {return `<div class="page-heading"><div class="heading-copy"><h1>${title}</h1><p>${subtitle}</p></div><div class="page-actions">${actions}</div></div>`;}
-const newExpenseButton = () => `<button class="button primary" data-action="new-expense">${icon('plus')}${t('记一笔')}</button>`;
+const newExpenseButton = () => archived()?'':`<button class="button primary" data-action="new-expense">${icon('plus')}${t('记一笔')}</button>`;
 
 async function start() {
   $('.brand').href=demo?'app.html?demo=1':'app.html';
   const accountButton=document.createElement('button');
   accountButton.className='icon-button';accountButton.dataset.action='account';accountButton.dataset.i18nAriaLabel='登录与账号';accountButton.setAttribute('aria-label',t('登录与账号'));accountButton.innerHTML=icon('people');
   $('.topbar-actions').append(accountButton);
+  const ledgerButton=document.createElement('button');ledgerButton.className='icon-button';ledgerButton.dataset.action='ledger-options';ledgerButton.setAttribute('aria-label',t('账本选项'));ledgerButton.dataset.i18nAriaLabel='账本选项';ledgerButton.innerHTML=icon('book');$('.topbar-actions').prepend(ledgerButton);
   try {
     let user;
     if (!demo) ({user} = await currentSession());
@@ -92,7 +98,7 @@ async function loadData(preferredId) {
   try {
   const oldId=state.snapshot?.ledger.id;
   const ledgers=await state.store.listLedgers();
-  const id=[preferredId,oldId,params.get('ledger'),ledgers[0]?.id].find(id=>ledgers.some(l=>l.id===id));
+  const id=[preferredId,oldId,params.get('ledger'),ledgers.find(row=>row.status!=='archived')?.id,ledgers[0]?.id].find(id=>ledgers.some(l=>l.id===id));
   const snapshot=id?await state.store.loadLedger(id):null;
   if(generation!==dataGeneration)return;
   state.ledgers=ledgers;state.snapshot=snapshot;
@@ -116,7 +122,7 @@ async function syncChanges(){
     syncSignature=signature;return;
   }
   const ledgers=await store.listLedgers(),oldId=state.snapshot?.ledger.id;
-  const id=[oldId,params.get('ledger'),ledgers[0]?.id].find(id=>ledgers.some(row=>row.id===id));
+  const id=[oldId,params.get('ledger'),ledgers.find(row=>row.status!=='archived')?.id,ledgers[0]?.id].find(id=>ledgers.some(row=>row.id===id));
   const snapshot=id?await store.loadLedger(id):null;
   if(!valid())return;
   const changed=Boolean(state.startupError)||JSON.stringify([state.ledgers,state.snapshot])!==JSON.stringify([ledgers,snapshot]);
@@ -132,6 +138,7 @@ async function syncChanges(){
   const url=new URL(location.href);if(id)url.searchParams.set('ledger',id);else url.searchParams.delete('ledger');history.replaceState(null,'',url);
 }
 function clearSession(){
+  ++editorRequest;
   closeReceiptViewer();
   ++dataGeneration;loadingData=0;autoSync?.stop();closeDialog();
   state.store=null;state.snapshot=null;state.ledgers=[];state.invitation=null;
@@ -144,11 +151,16 @@ function startAutoSync(){
 function render() {
   const nav = views.map(v=>`<button class="nav-item ${state.view===v.id?'active':''}" data-view="${v.id}" ${state.view===v.id?'aria-current="page"':''}>${icon(v.icon)}<span>${t(v.name)}</span></button>`).join('');
   $('#primary-nav').innerHTML=nav; $('#mobile-nav').innerHTML=nav;
-  $('#ledger-picker').innerHTML=state.ledgers.map(l=>`<option value="${escape(l.id)}" ${l.id===state.snapshot?.ledger.id?'selected':''}>${escape(l.title)}</option>`).join('')+`<option value="__new__">${t('＋ 新建账本')}</option>`;
-  $('#ledger-nav').innerHTML=state.ledgers.map(l=>`<button class="ledger-nav-item ${l.id===state.snapshot?.ledger.id?'active':''}" data-ledger="${escape(l.id)}"><span class="ledger-dot"></span><span>${escape(l.title)}</span></button>`).join('');
+  const activeLedgers=state.ledgers.filter(l=>l.status!=='archived'),archivedLedgers=state.ledgers.filter(l=>l.status==='archived');
+  $('#ledger-picker').innerHTML=[...activeLedgers,...archivedLedgers].map(l=>`<option value="${escape(l.id)}" ${l.id===state.snapshot?.ledger.id?'selected':''}>${escape(l.title)}${l.status==='archived'?' · '+t('已归档'):''}</option>`).join('')+`<option value="__new__">${t('＋ 新建账本')}</option>`;
+  $('#ledger-nav').innerHTML=activeLedgers.map(l=>`<button class="ledger-nav-item ${l.id===state.snapshot?.ledger.id?'active':''}" data-ledger="${escape(l.id)}"><span class="ledger-dot"></span><span>${escape(l.title)}</span></button>`).join('');
+  $('#ledger-nav').insertAdjacentHTML('beforeend',`<button class="text-link archived-ledgers-link" data-action="archived-ledgers">${t('已归档账本')}${archivedLedgers.length?` (${archivedLedgers.length})`:''}</button>`);
   if (!state.snapshot) {$('#main-content').innerHTML=heading(t('从第一本账开始'),t('把一次旅行，或每一天的小账，记在一起。'))+empty(t('还没有共享账本'),t('新建账本后，可以先用名字添加成员。'),`<button class="button primary" data-action="new-ledger">${t('新建账本')}</button>`);return;}
   if (!views.some(v=>v.id===state.view)) state.view='overview';
   $('#main-content').innerHTML=({overview:overview,expenses:expensesView,settlements:settlementsView,members:membersView}[state.view])();
+  $('#main-content').insertAdjacentHTML('afterbegin',archived()?`<p class="ledger-archive-status">${t('已归档 · 只读')} ${owner()?`<button class="text-link" data-action="restore-ledger">${t('恢复账本')}</button>`:''}</p>`:'');
+  if(state.view==='expenses'&&state.expenseTab==='saved-drafts')renderSavedDrafts();
+  if(archived())$('#main-content').querySelectorAll('[data-action="new-template"],[data-use-template],[data-template-from-expense],[data-approve]').forEach(button=>button.hidden=true);
   if(state.view==='expenses'&&state.expenseTab==='records')bindExpenseSearch($('#expense-search'),value=>{state.search=value;updateExpenseResults();});
 }
 function myTotals() {
@@ -206,16 +218,17 @@ function updateExpenseResults() {
 }
 function expensesView() {
   const filtered=filteredExpenses();
-  const due=dueOccurrences(state.snapshot.templates || [],state.snapshot.occurrences || [],localDate());
-  const tabs=`<div class="expense-tabs" role="group" aria-label="${t('账单内容')}">${[['records',t('已记账')],['drafts',t('待确认')+(due.length?` (${due.length})`:'')],['templates',t('模板与周期')],['history',t('操作历史')]].map(([id,label])=>`<button class="chip ${state.expenseTab===id?'active':''}" data-expense-tab="${id}" aria-pressed="${state.expenseTab===id}">${label}</button>`).join('')}</div>`;
+  const due=archived()?[]:dueOccurrences(state.snapshot.templates || [],state.snapshot.occurrences || [],localDate());
+  const tabs=`<div class="expense-tabs" role="group" aria-label="${t('账单内容')}">${[['records',t('已记账')],['saved-drafts',t('草稿')],['drafts',t('待确认')+(due.length?` (${due.length})`:'')],['templates',t('模板与周期')],['history',t('操作历史')]].map(([id,label])=>`<button class="chip ${state.expenseTab===id?'active':''}" data-expense-tab="${id}" aria-pressed="${state.expenseTab===id}">${label}</button>`).join('')}</div>`;
   const top=heading(t('每一笔，都有来处。'),t('查看共同开销，也看清自己承担的部分。'),newExpenseButton())+tabs;
+  if(state.expenseTab==='saved-drafts')return top+`<section class="panel" id="saved-drafts"><p class="muted">${t('正在读取草稿…')}</p></section>`;
   if(state.expenseTab==='templates')return top+templatesView();
   if(state.expenseTab==='drafts')return top+draftsView(due);
   if(state.expenseTab==='history')return top+`<section class="panel">${historyMarkup(state.snapshot)}</section>`;
   return top+
   `<div class="filter-bar"><div class="filter-chips">${[['all',t('全部')],['mine',t('我垫付')],['participating',t('我参与')],['open',t('未结清')]].map(([id,label])=>`<button class="chip ${state.filter===id?'active':''}" data-filter="${id}" aria-pressed="${state.filter===id}">${label}</button>`).join('')}</div><label class="search-field">${icon('search')}<input id="expense-search" type="search" placeholder="${t('搜索账单')}" aria-label="${t('搜索账单')}" value="${escape(state.search)}" aria-controls="expense-results"></label></div><div class="expense-results-summary"><p id="expense-result-count" role="status" aria-live="polite">${t('{count}笔账单',{count:filtered.length})}</p><button id="clear-expense-filters" class="text-link" data-action="clear-expense-filters" ${hasExpenseFilters()?'':'hidden'}>${t('清除筛选')}</button></div><section id="expense-results" class="panel">${expenseResults(filtered)}</section>`;
 }
-const canManageTemplate = template => owner() || template.createdByUid===state.store.currentUser.uid;
+const canManageTemplate = template => !archived()&&(owner() || template.createdByUid===state.store.currentUser.uid);
 const scheduleLabel = frequency => ({none:t('按需使用'),weekly:t('每周'),monthly:t('每月'),yearly:t('每年')})[frequency];
 function templatesView() {
   const templates=(state.snapshot.templates || []).filter(template=>state.showArchived?template.status==='archived':template.status!=='archived');
@@ -235,17 +248,18 @@ function settlementsView() {
 }
 function membersView() {
   const claims=(state.snapshot.claims || []).filter(c=>c.status==='pending');
-  return heading(t('一起记，才能一起算清。'),t('先用名字添加伙伴，邀请认领后再连接到本人账号。'),owner()?`<button class="button primary" data-action="new-member">${icon('plus')}${t('添加成员')}</button>`:'')+
-    `<div class="overview-grid"><section class="panel">${state.snapshot.members.map(m=>`<div class="member-row spacious">${avatar(m.name)}<div class="member-info"><strong>${escape(m.name)}${m.uid===state.store.currentUser.uid?` <span class="me-label">${t('我')}</span>`:''}</strong><small>${m.uid===state.snapshot.ledger.ownerUid?t('账本创建者'):m.uid?t('已认领 · 可共同记账'):t('临时成员 · 认领前由账本创建者代记')}</small></div>${m.uid?`<span class="badge success">${t('已加入')}</span>`:owner()?`<button class="button secondary small-button" data-invite-member="${escape(m.id)}">${t('邀请认领')}</button>`:`<span class="badge neutral">${t('待认领')}</span>`}</div>`).join('')}</section><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('认领申请')}</h2><span class="count-label">${claims.length}</span></div>${owner()?claims.length?claims.map(c=>{const invite=state.snapshot.invites.find(i=>i.id===c.inviteToken);return `<div class="claim-row"><p>${t('{name}申请认领「{member}」', {name:`<strong>${escape(c.displayName)}</strong>`,member:escape(invite?.memberName || t('成员'))})}</p><button class="button primary full-width" data-approve="${escape(c.inviteToken)}" data-uid="${escape(c.uid)}">${t('核对本人后批准')}</button></div>`;}).join(''):`<p class="muted">${t('伙伴通过邀请链接申请后，会在这里等待你的确认。')}</p>`:`<p class="muted">${t('认领申请由账本创建者核对与批准。')}</p>`}</section><div class="notice"><h3>${t('名字相同，也不会自动合并。')}</h3><p>${t('临时成员的账目保持原样。本人登录、提交认领、经创建者确认后，才会连接到账号。')}</p></div></aside></div>`;
+  return heading(t('一起记，才能一起算清。'),t('先用名字添加伙伴，邀请认领后再连接到本人账号。'),owner()&&!archived()?`<button class="button primary" data-action="new-member">${icon('plus')}${t('添加成员')}</button>`:'')+
+    `<div class="overview-grid"><section class="panel">${state.snapshot.members.map(m=>`<div class="member-row spacious">${avatar(m.name)}<div class="member-info"><strong>${escape(m.name)}${m.uid===state.store.currentUser.uid?` <span class="me-label">${t('我')}</span>`:''}</strong><small>${m.uid===state.snapshot.ledger.ownerUid?t('账本创建者'):m.uid?t('已认领 · 可共同记账'):t('临时成员 · 认领前由账本创建者代记')}</small></div>${m.uid?`<span class="badge success">${t('已加入')}</span>`:owner()&&!archived()?`<button class="button secondary small-button" data-invite-member="${escape(m.id)}">${t('邀请认领')}</button>`:`<span class="badge neutral">${t('待认领')}</span>`}</div>`).join('')}</section><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('认领申请')}</h2><span class="count-label">${claims.length}</span></div>${owner()?claims.length?claims.map(c=>{const invite=state.snapshot.invites.find(i=>i.id===c.inviteToken);return `<div class="claim-row"><p>${t('{name}申请认领「{member}」', {name:`<strong>${escape(c.displayName)}</strong>`,member:escape(invite?.memberName || t('成员'))})}</p><button class="button primary full-width" data-approve="${escape(c.inviteToken)}" data-uid="${escape(c.uid)}">${t('核对本人后批准')}</button></div>`;}).join(''):`<p class="muted">${t('伙伴通过邀请链接申请后，会在这里等待你的确认。')}</p>`:`<p class="muted">${t('认领申请由账本创建者核对与批准。')}</p>`}</section><div class="notice"><h3>${t('名字相同，也不会自动合并。')}</h3><p>${t('临时成员的账目保持原样。本人登录、提交认领、经创建者确认后，才会连接到账号。')}</p></div></aside></div>`;
 }
 
 function openDialog(title,body,footer='',wide=false) {
+  activeEditor?.flush();activeEditor=null;
   dialogRefresh=null;
   const d=$('#action-dialog'); d.classList.remove('history-dialog');d.classList.toggle('wide-dialog',wide);
   $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
 }
-function closeDialog() {$('#action-dialog').close();}
+function closeDialog() {activeEditor?.flush();activeEditor=null;$('#action-dialog').close();}
 function formError(message) {const e=$('#form-error');if(e&&(!e.closest('dialog')||e.closest('dialog').open)){e.textContent=message;e.hidden=false;}else toast(message);}
 function errorSlot(){return '<p class="form-error" id="form-error" role="alert" hidden></p>';}
 async function finishSave(success,preferredId) {
@@ -269,15 +283,30 @@ function newMember() {
   openDialog(t('添加一位伙伴'),`<form id="member-form"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="name" maxlength="40" placeholder="${t('输入名字或熟悉的称呼')}" required autofocus></label><p class="form-hint">${t('现在就可以为这位伙伴记账，之后再邀请本人认领。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('添加成员')}</button></div></form>`);
   $('#member-form').addEventListener('submit',e=>submitForm(e,async data=>{await state.store.addMember(state.snapshot.ledger.id,data.get('name').trim());await finishSave(t('成员已添加，可以开始分摊了。'));}));
 }
-function newExpense(options={}) {
+async function newExpense(options={},resumeRecord=null) {
   if(!state.snapshot)return newLedger();
-  openExpenseEditor({snapshot:state.snapshot,user:state.store.currentUser,isOwner:owner(),openDialog,submitForm,errorSlot,formError,today:localDate(),onSave:async(payload,settings)=>{
-    if(settings.templateMode)await state.store.saveTemplate(state.snapshot.ledger.id,payload,settings.templateId);
-    else if(settings.expenseId)await state.store.updateExpense(state.snapshot.ledger.id,settings.expenseId,payload);
-    else await state.store.addExpense(state.snapshot.ledger.id,payload);
+  if(archived()){toast(t('账本已归档，请由创建者恢复后再修改。'));return;}
+  const request=++editorRequest,store=state.store,snapshot=state.snapshot,id=snapshot.ledger.id;
+  const scope=draftScope(store.mode,store.currentUser.uid,id),key=resumeRecord?.key||draftKey(scope,options);
+  let record,storageError=false;
+  try{record=resumeRecord||await draftStore.get(key);}catch{storageError=true;}
+  if(request!==editorRequest||state.store!==store||state.snapshot?.ledger.id!==id)return;
+  if(record?.scope!==scope)record=null;
+  if(record)options=record.options;
+  activeEditor=openExpenseEditor({snapshot,user:store.currentUser,isOwner:owner(),draft:storageError?null:{store:draftStore,key,scope,record},openDialog,submitForm,errorSlot,formError,today:localDate(),onSave:async(payload,settings)=>{
+    if(store.mode==='api'&&settings.draftRequestKey){
+      const type=settings.templateMode?'saveTemplate':settings.expenseId?'updateExpense':'addExpense';
+      const args=settings.templateMode?[payload,settings.templateId||null]:settings.expenseId?[settings.expenseId,payload]:[payload];
+      await store.saveDraftCommand(id,type,args,settings.draftRequestKey);
+    }
+    else if(settings.templateMode)await store.saveTemplate(id,payload,settings.templateId);
+    else if(settings.expenseId)await store.updateExpense(id,settings.expenseId,payload);
+    else await store.addExpense(id,payload);
+    try{await settings.draftCommitted?.();}catch{/* Keep a newer draft from another tab. The bill itself is already saved. */}
     state.view='expenses';state.expenseTab=settings.templateMode?'templates':'records';state.search='';state.filter='all';
     await finishSave(settings.expenseId?t('更正已保存，操作历史已更新。'):settings.templateMode?t('模板已保存。'):t('账单已保存，每个人的份额都记好了。'));
   }},options);
+  if(storageError)formError(t('无法保存草稿，请先不要关闭页面。'));
 }
 
 function expenseExtras(expense) {
@@ -287,7 +316,7 @@ function expenseExtras(expense) {
 function showExpense(id) {
   const e=state.snapshot.expenses.find(e=>e.id===id);if(!e)return;
   const shares=Object.entries(consumptionShares(e)).map(([id,cents])=>{const isPayer=id===e.payerMemberId,remaining=remainingFor(e,id),paid=e.repaid?.[id]||0;return `<div class="member-row">${avatar(memberName(id))}<div class="member-info"><strong>${escape(memberName(id))}${isPayer?t(' · 垫付人'):''}</strong><small>${isPayer?t('自己的消费份额'):paid?`${t('已还')} ${money(paid)}`:t('尚未还款')}</small></div><div class="expense-amount"><strong>${money(cents)}</strong><small>${isPayer?t('自付'):`${t('待付')} ${money(remaining)}`}</small></div>${!isPayer&&remaining>0&&e.status==='active'&&canReceive(e)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(id)}">${t('收款')}</button>`:''}</div>`;}).join('');
-  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button><button class="text-link" data-expense-history="${escape(e.id)}">${t('操作历史')}</button>${e.status==='active'&&canReceive(e)?`<button class="button secondary" data-edit-expense="${escape(e.id)}">${t('补充与更正')}</button>`:''}${e.status==='active'&&canReceive(e)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
+  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${expenseExtras(e)}${errorSlot()}`,`${archived()?'':`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>`}<button class="text-link" data-expense-history="${escape(e.id)}">${t('操作历史')}</button>${e.status==='active'&&canReceive(e)?`<button class="button secondary" data-edit-expense="${escape(e.id)}">${t('补充与更正')}</button>`:''}${e.status==='active'&&canReceive(e)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
   dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showExpense(id);$('.dialog-body').scrollTop=top;};
 }
 function showHistory(id) {
@@ -350,6 +379,51 @@ function shareDialog() {
   $('#download-statement').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([$('#statement-text').value],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`${state.snapshot.ledger.title.replace(/[\\/:*?"<>|]/g,'-')}${t('-结算单.txt')}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t('结算单已下载。'));});
 }
 
+const currentDraftScope=()=>state.store&&state.snapshot?draftScope(state.store.mode,state.store.currentUser.uid,state.snapshot.ledger.id):null;
+async function renderSavedDrafts(){
+  const scope=currentDraftScope(),target=$('#saved-drafts');
+  try{
+    const records=await draftStore.list(scope);
+    if(!target.isConnected||scope!==currentDraftScope())return;
+    target.innerHTML=records.length?`<p class="form-hint">${t('草稿保存在此设备，提交后才会进入共同账本。')}</p><div class="plan-list">${records.map(record=>`<div class="plan-row"><div class="plan-info"><strong>${escape(record.title)}</strong><small>${escape(new Intl.DateTimeFormat(getLanguage(),{dateStyle:'medium',timeStyle:'short'}).format(new Date(record.updatedAt)))}</small></div><div class="plan-actions">${!archived()?`<button class="button secondary" data-resume-draft="${escape(record.key)}">${t('继续填写')}</button>`:''}<button class="text-link danger-link" data-discard-draft="${escape(record.key)}">${t('放弃草稿')}</button></div></div>`).join('')}</div>`:empty(t('没有未完成的草稿'),t('填写中的账单会自动保存，稍后可以继续。'));
+  }catch{if(target.isConnected)target.innerHTML=`<p class="form-error">${t('无法读取此设备的草稿，请检查浏览器存储权限。')}</p>`;}
+}
+function showArchivedLedgers(){
+  const ledgers=state.ledgers.filter(row=>row.status==='archived');
+  openDialog(t('已归档账本'),ledgers.length?`<div class="plan-list">${ledgers.map(row=>`<button class="button secondary full-width" data-ledger="${escape(row.id)}">${escape(row.title)} · ${escape(row.currency)}</button>`).join('')}</div>`:`<p class="muted">${t('还没有已归档账本。')}</p>`);
+}
+function changeLedgerStatus(status){
+  if(!state.snapshot||!owner())return;
+  const id=state.snapshot.ledger.id;
+  const pending=activeExpenses().reduce((sum,e)=>sum+outstanding(e),0);
+  const message=status==='archived'?t('归档后所有成员只能查看和导出，停止记账、收款和周期确认；创建者可随时恢复。')+(pending?` ${t('仍有 {amount} 待结清，归档不会清除欠款。',{amount:money(pending)})}`:''):t('恢复后成员可以继续记账和收款，周期账单也会重新显示待确认期次。');
+  confirmAction(status==='archived'?t('归档这个账本？'):t('恢复这个账本？'),message,status==='archived'?t('归档账本'):t('恢复账本'),()=>state.store.setLedgerStatus(id,status),status==='archived'?t('账本已归档。'):t('账本已恢复。'));
+}
+function downloadBlob(blob,fileName){
+  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=fileName;link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+}
+function ledgerOptions(){
+  if(!state.snapshot)return;
+  const store=state.store,id=state.snapshot.ledger.id,title=state.snapshot.ledger.title;
+  openDialog(t('账本选项'),`<h3>${escape(title)}</h3><div class="ledger-tools"><h4>${t('导出账本')}</h4>${store.mode==='api'?`<p class="form-hint">${t('完整账本包含明细、分摊、还款、操作历史及当前和历史附件。')}</p><button class="button primary" data-export-format="zip">${t('下载完整账本 ZIP')}</button>`:''}<button class="button secondary" data-export-format="csv">${t('下载账单明细 CSV')}</button><button class="button secondary" data-export-format="json">${t('下载账本数据 JSON（不含附件文件）')}</button></div>${errorSlot()}${owner()?`<div class="ledger-tools"><h4>${t('账本状态')}</h4><button class="button secondary" data-action="${archived()?'restore-ledger':'archive-ledger'}">${archived()?t('恢复账本'):t('归档账本')}</button></div>`:''}<button class="text-link" data-action="archived-ledgers">${t('查看已归档账本')}</button>`);
+  $('#dialog-content').querySelectorAll('[data-export-format]').forEach(button=>button.addEventListener('click',async()=>{
+    const label=button.textContent;button.disabled=true;button.textContent=t('正在准备导出…');
+    try{
+      let blob,fileName;
+      if(button.dataset.exportFormat==='zip'){
+        const response=await fetch(`/api/ledgers/${encodeURIComponent(id)}/export`,{credentials:'same-origin',cache:'no-store'});
+        if(!response.ok){const result=await response.json();throw new Error(result.error?.message||t('导出失败，请重试。'));}
+        blob=await response.blob();fileName=exportFileName(title)+'.zip';
+      }else{
+        const bundle=ledgerExport(await store.loadLedger(id)),isCsv=button.dataset.exportFormat==='csv';
+        blob=new Blob([bundle.tables[isCsv?'expenses.csv':'ledger.json']],{type:isCsv?'text/csv;charset=utf-8':'application/json'});fileName=exportFileName(title)+(isCsv?'.csv':'.json');
+      }
+      if(state.store!==store)return;
+      downloadBlob(blob,fileName);
+    }catch(error){formError(errorMessage(error));}finally{button.disabled=false;button.textContent=label;}
+  }));
+}
+
 function accountDialog() {
   if(!state.store){showSignIn();return;}
   openDialog(t('我的账号'),`<p>${demo?t('登录后，可以用自己的账号加入共同账本。'):t('已登录：{account}', {account:escape(state.store.currentUser.email || state.store.currentUser.displayName || t('我的账号'))})}</p><div class="form-actions">${demo?`<a class="button primary" href="index.html">${t('登录账号')}</a>`:`<button class="button primary" id="sign-out">${t('退出登录')}</button>`}</div>`);
@@ -373,6 +447,12 @@ document.addEventListener('click', async event => {
   if (el.dataset.inviteMember) {el.disabled=true;await invitationDialog(el.dataset.inviteMember);el.disabled=false;return;}
   if (el.dataset.filter) {state.filter=el.dataset.filter;render();return;}
   if(el.dataset.expenseTab){state.expenseTab=el.dataset.expenseTab;render();return;}
+  if(el.dataset.resumeDraft||el.dataset.discardDraft){
+    try{const key=el.dataset.resumeDraft||el.dataset.discardDraft,record=await draftStore.get(key);if(!record||record.scope!==currentDraftScope())return;
+      if(el.dataset.resumeDraft)await newExpense(record.options,record);
+      else confirmAction(t('放弃这份草稿？'),t('尚未提交的内容和附件将从此设备移除，已保存账单不受影响。'),t('放弃草稿'),()=>draftStore.remove(key,record.revision),t('草稿已移除。'));
+    }catch(error){toast(errorMessage(error));}return;
+  }
   if(el.dataset.templateFromExpense){newExpense({templateMode:true,initial:state.snapshot.expenses.find(e=>e.id===el.dataset.templateFromExpense)});return;}
   if(el.dataset.useTemplate||el.dataset.editTemplate||el.dataset.confirmTemplate){
     const id=el.dataset.useTemplate||el.dataset.editTemplate||el.dataset.confirmTemplate,template=state.snapshot.templates.find(row=>row.id===id);
@@ -389,6 +469,10 @@ document.addEventListener('click', async event => {
   if (el.dataset.approve) {confirmAction(t('确认这位伙伴的身份'),t('确认申请人是你邀请的本人后，再将临时成员的账目关联到这个账号。'),t('确认并批准'),async()=>{await state.store.approveClaim(el.dataset.approve,el.dataset.uid);},t('认领已批准，伙伴可以用自己的账号共同记账了。'));return;}
   const action=el.dataset.action;
   if(action==='close-dialog')closeDialog();
+  if(action==='ledger-options')ledgerOptions();
+  if(action==='archived-ledgers')showArchivedLedgers();
+  if(action==='archive-ledger')changeLedgerStatus('archived');
+  if(action==='restore-ledger')changeLedgerStatus('active');
   if(action==='clear-expense-filters'){state.search='';state.filter='all';render();$('#expense-search')?.focus();}
   if(action==='new-ledger')newLedger();
   if(action==='new-member')newMember();
@@ -399,17 +483,17 @@ document.addEventListener('click', async event => {
   if(action==='account')accountDialog();
   if(action==='refresh') {el.disabled=true;try {if(params.has('invite')&&!state.inviteAccepted)await showInvitation(params.get('invite'));else await loadData();toast(t('账本已刷新。'));}catch(e){toast(errorMessage(e));}finally{el.disabled=false;}}
 });
-async function selectLedger(id) {try {await loadData(id);}catch(error){toast(errorMessage(error));}}
+async function selectLedger(id) {++editorRequest;closeDialog();try {await loadData(id);}catch(error){toast(errorMessage(error));}}
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
 window.addEventListener('hashchange',()=>{if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.snapshot)render();}});
 $('#language-picker').addEventListener('change',event=>setLanguage(event.target.value));
-document.addEventListener('visibilitychange',()=>autoSync?.wake());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)activeEditor?.flush();autoSync?.wake();});
 document.addEventListener('focusout',()=>autoSync?.wake());
 window.addEventListener('online',()=>autoSync?.wake());
 window.addEventListener('focus',()=>autoSync?.wake());
-window.addEventListener('pagehide',()=>{++dataGeneration;autoSync?.stop();});
+window.addEventListener('pagehide',()=>{activeEditor?.flush();++dataGeneration;autoSync?.stop();});
 window.addEventListener('pageshow',()=>{if(!state.starting&&state.store?.mode==='api')startAutoSync();});
-$('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open)dialogRefresh=null;autoSync?.wake();});
+$('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open){activeEditor?.flush();activeEditor=null;dialogRefresh=null;}autoSync?.wake();});
 document.addEventListener('languagechange',()=>{
   const claimName=$('#claim-form input[name="name"]')?.value;
   translatePage();

@@ -6,7 +6,7 @@ import { HttpError,hash } from './auth.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['setLedgerStatus','addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){

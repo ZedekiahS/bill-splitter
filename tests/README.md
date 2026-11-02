@@ -1,8 +1,9 @@
 # Bill Splitter tests
 
 Run commands from the repository directory with Node 22+. Calculation suites use
-the shipped application modules with lightweight stubs or isolated storage; no
-login, npm test dependencies, emulator, or network is needed.
+the shipped application modules with lightweight stubs or isolated storage. Run
+`npm ci` first for the IndexedDB and ZIP test dependencies; local suites need no
+login, emulator or network service.
 
 ## Current PostgreSQL API suite
 
@@ -11,8 +12,8 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 37 tests use real PostgreSQL transactions: 13 through Fastify request
-injection and 24 through a loopback HTTP listener with independent session cookies.
+The 41 tests use real PostgreSQL transactions: 13 through Fastify request
+injection and 28 through a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment
@@ -34,9 +35,11 @@ node tests/expense-features-store.test.mjs
 node tests/invitation-navigation.test.mjs
 node tests/api-client.test.mjs
 node tests/auto-sync.test.mjs
+node tests/expense-drafts.test.mjs
+node tests/ledger-export.test.mjs
 ```
 
-All 173 local tests pass across these nine suites. The API-client suite uses
+All 182 local tests pass across these eleven suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -51,6 +54,13 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
 | `api-client.test.mjs` | 6 | Offline/503/lost-response retry keys, rejected inputs, expired login and concurrent duplicates |
 | `auto-sync.test.mjs` | 5 | Single-flight scheduling, hidden pages, network backoff/recovery, expired session and page lifecycle |
+| `expense-drafts.test.mjs` | 6 | Incomplete inputs and attachment recovery, scope isolation, competing tabs, queued writes, quota errors and persistent retry keys |
+| `ledger-export.test.mjs` | 3 | Stable format and cents, private-field exclusion, CSV quoting/formulas, historical attachments and independently decoded ZIP |
+
+The four added HTTP scenarios cover archive permissions and all blocked write
+commands, archive/write races and recurring restoration, authenticated ZIP export
+with historical receipts, and an uncertain submission retried from a new session.
+See [browser verification and limits](../docs/review/drafts-export-2026-11-02.md).
 
 The original bill flow divides among selected debtors, excluding the payer. The
 new shared-ledger flow explicitly selects participants and allows the payer to
