@@ -248,7 +248,7 @@ function settlementsView() {
 }
 function membersView() {
   const claims=(state.snapshot.claims || []).filter(c=>c.status==='pending');
-  return heading(t('一起记，才能一起算清。'),t('先用名字添加伙伴，邀请认领后再连接到本人账号。'),owner()&&!archived()?`<button class="button primary" data-action="new-member">${icon('plus')}${t('添加成员')}</button>`:'')+
+  return heading(t('一起记，才能一起算清。'),t('先用名字添加伙伴，邀请认领后再连接到本人账号。'),!archived()?`<button class="button primary" data-action="new-member">${icon('plus')}${t('添加成员')}</button>`:'')+
     `<div class="overview-grid"><section class="panel">${state.snapshot.members.map(m=>`<div class="member-row spacious">${avatar(m.name)}<div class="member-info"><strong>${escape(m.name)}${m.uid===state.store.currentUser.uid?` <span class="me-label">${t('我')}</span>`:''}</strong><small>${m.uid===state.snapshot.ledger.ownerUid?t('账本创建者'):m.uid?t('已认领 · 可共同记账'):t('临时成员 · 认领前由账本创建者代记')}</small></div>${m.uid?`<span class="badge success">${t('已加入')}</span>`:owner()&&!archived()?`<button class="button secondary small-button" data-invite-member="${escape(m.id)}">${t('邀请认领')}</button>`:`<span class="badge neutral">${t('待认领')}</span>`}</div>`).join('')}</section><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('认领申请')}</h2><span class="count-label">${claims.length}</span></div>${owner()?claims.length?claims.map(c=>{const invite=state.snapshot.invites.find(i=>i.id===c.inviteToken);return `<div class="claim-row"><p>${t('{name}申请认领「{member}」', {name:`<strong>${escape(c.displayName)}</strong>`,member:escape(invite?.memberName || t('成员'))})}</p><button class="button primary full-width" data-approve="${escape(c.inviteToken)}" data-uid="${escape(c.uid)}">${t('核对本人后批准')}</button></div>`;}).join(''):`<p class="muted">${t('伙伴通过邀请链接申请后，会在这里等待你的确认。')}</p>`:`<p class="muted">${t('认领申请由账本创建者核对与批准。')}</p>`}</section><div class="notice"><h3>${t('名字相同，也不会自动合并。')}</h3><p>${t('临时成员的账目保持原样。本人登录、提交认领、经创建者确认后，才会连接到账号。')}</p></div></aside></div>`;
 }
 
@@ -293,7 +293,7 @@ async function newExpense(options={},resumeRecord=null) {
   if(request!==editorRequest||state.store!==store||state.snapshot?.ledger.id!==id)return;
   if(record?.scope!==scope)record=null;
   if(record)options=record.options;
-  activeEditor=openExpenseEditor({snapshot,user:store.currentUser,isOwner:owner(),draft:storageError?null:{store:draftStore,key,scope,record},openDialog,submitForm,errorSlot,formError,today:localDate(),onSave:async(payload,settings)=>{
+  activeEditor=openExpenseEditor({snapshot,user:store.currentUser,isOwner:owner(),draft:storageError?null:{store:draftStore,key,scope,record},openDialog,submitForm,errorSlot,formError,today:localDate(),onAddMember:async name=>{const memberId=await store.addMember(id,name);autoSync?.wake();return {id:memberId,name:name.trim(),uid:null};},onSave:async(payload,settings)=>{
     if(store.mode==='api'&&settings.draftRequestKey){
       const type=settings.templateMode?'saveTemplate':settings.expenseId?'updateExpense':'addExpense';
       const args=settings.templateMode?[payload,settings.templateId||null]:settings.expenseId?[settings.expenseId,payload]:[payload];

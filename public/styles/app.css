@@ -600,3 +600,7 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
 .ledger-tools { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
 .ledger-tools h4, .ledger-tools p { margin: 0; }
 #saved-drafts .plan-info { overflow-wrap: anywhere; }
+.entry-member-add { margin-block: 12px 24px; }
+.entry-member-add summary { color: var(--primary); cursor: pointer; padding-block: 10px; }
+.inline-member-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.inline-member-fields .form-field { flex: 1 1 160px; margin: 0; }

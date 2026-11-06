@@ -1,4 +1,10 @@
 export default {
+  '添加参与人':'Add participant',
+  '添加到账本，可稍后邀请本人认领。':'Add to this ledger. You can invite them to claim their identity later.',
+  '添加并选择':'Add and select',
+  '请填写伙伴的称呼。':'Enter a name for this person.',
+  '正在添加…':'Adding…',
+  '成员正在添加，请稍候再保存。':'A participant is being added. Wait before saving.',
   '账本选项':'Ledger options',
   '已归档账本':'Archived ledgers',
   '已归档':'Archived',

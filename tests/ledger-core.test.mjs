@@ -421,7 +421,8 @@ test('approved member can manage own payments but cannot impersonate a payer or 
   const { memberStore } = await approveAlice(f);
   const ownExpense = await memberStore.addExpense(f.ledgerId, { title: '打车', date: DATE, amountCents: 1000, payerMemberId: f.aliceId, shares: { [f.ownerId]: 1000 } });
   await deny(() => memberStore.addExpense(f.ledgerId, { title: '假冒垫付', date: DATE, amountCents: 1000, payerMemberId: f.ownerId, shares: { [f.aliceId]: 1000 } }));
-  await deny(() => memberStore.addMember(f.ledgerId, '越权'));
+  const temporary=await memberStore.addMember(f.ledgerId, '同行伙伴');
+  assert.equal((await memberStore.loadLedger(f.ledgerId)).members.find(row=>row.id===temporary).uid,null);
   await deny(() => memberStore.createInvite(f.ledgerId, f.ownerId));
   await deny(() => memberStore.recordPayment(f.ledgerId, { expenseId: ownerExpense, fromMemberId: f.aliceId, amountCents: 100, date: DATE }));
   await deny(() => memberStore.reverseExpense(f.ledgerId, ownerExpense));

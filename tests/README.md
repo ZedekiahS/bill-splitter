@@ -12,8 +12,8 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 41 tests use real PostgreSQL transactions: 13 through Fastify request
-injection and 28 through a loopback HTTP listener with independent session cookies.
+The 42 tests use real PostgreSQL transactions: 13 through Fastify request
+injection and 29 through a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment

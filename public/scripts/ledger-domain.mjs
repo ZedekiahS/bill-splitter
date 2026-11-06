@@ -135,7 +135,7 @@ export function createStateStore({read,mutate,user}) {
         (ledger.statusHistory||=[]).push({status,at,actorUid:user.uid,actorName:Object.values(state.members[id]).find(m=>m.uid===user.uid)?.name||user.displayName});
       }); },
       async addMember(id, name) { return mutate((state, user, createdAt) => {
-        owner(state.ledgers[id], user); const memberId = newId();
+        writable(state.ledgers[id], user); const memberId = newId();
         state.members[id][memberId] = { name: text(name, "成员名字"), uid: null, createdAt, claimInviteId: null }; return memberId;
       }); },
       async addExpense(id, payload) { return mutate((state, user, createdAt) => {

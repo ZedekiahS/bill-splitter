@@ -70,6 +70,8 @@ They demonstrate the claim and approval flow, not cross-device sharing.
   Legacy entries show only recorded facts; missing actors are not invented.
 - Temporary named members who can later claim their identity through an invite,
   subject to the ledger owner's approval. A matching name never grants access.
+  Any existing member can add a temporary participant while entering an expense,
+  preserving the current form and split inputs.
 - Partial repayments confirmed by the recipient or ledger owner. Reversals leave
   a journal entry and restore the outstanding amount. Expenses with effective
   repayments cannot be reversed until those repayments are reversed.
@@ -127,8 +129,8 @@ calculation/storage tests, 7 localization regressions, 4 expense-search
 regressions, 24 recurring/item/attachment checks, 13 feature-storage checks,
 7 shared-session UI regressions, 7 API-client retry/error/LAN checks, and 5 automatic
 synchronization scheduling checks, 6 draft persistence checks and 3 export checks.
-The 41 PostgreSQL API tests exercise real authenticated transactions, permissions,
-concurrency and private files, including 28 scenarios through an actual HTTP
+The 42 PostgreSQL API tests exercise real authenticated transactions, permissions,
+concurrency and private files, including 29 scenarios through an actual HTTP
 listener. They reset only their dedicated test database and run sequentially.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.

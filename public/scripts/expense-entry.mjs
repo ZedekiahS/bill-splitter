@@ -25,7 +25,7 @@ export function openExpenseEditor(context, options = {}) {
   let saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
   let splitType=recovered?.splitType||(initial.items?.length?'items':initial.shares?'amount':'equal'), amountDraftInitialized=recovered?.amountDraftInitialized??Boolean(initial.shares);
   let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds]}));
-  let receipts=recovered?.receipts||(editing?[...(initial.receipts||[])]:[]), readingReceipts=false;
+  let receipts=recovered?.receipts||(editing?[...(initial.receipts||[])]:[]), readingReceipts=false,addingMember=false;
   const initialShares=initial.shares?consumptionShares(initial):{};
   const defaultCount=Math.min(s.members.length,8);
   const payerOptions=s.members.filter(m=>owner()||m.uid===state.store.currentUser.uid).map(m=>`<option value="${escape(m.id)}" ${m.id===me?.id?'selected':''}>${escape(m.name)}${m.id===me?.id?t('（我）'):''}</option>`).join('');
@@ -67,6 +67,7 @@ export function openExpenseEditor(context, options = {}) {
   }
   function updateMode(){
     const itemMode=splitType==='items';
+    if($('#entry-add-member')&&!addingMember)$('#entry-add-member').textContent=t(itemMode?'添加参与人':'添加并选择');
     $('#percent-fields').hidden=splitType!=='percent';$('#amount-fields').hidden=splitType!=='amount';$('#item-fields').hidden=!itemMode;
     form.querySelector('.participant-fieldset').hidden=itemMode;form.elements.amount.readOnly=itemMode||financialLocked;
     form.querySelectorAll('[data-split]').forEach(button=>{button.classList.toggle('active',button.dataset.split===splitType);button.setAttribute('aria-pressed',String(button.dataset.split===splitType));});
@@ -75,6 +76,33 @@ export function openExpenseEditor(context, options = {}) {
   $('#add-item').addEventListener('click',()=>{itemDrafts=readItemDrafts();if(itemDrafts.length>=8)return;itemDrafts.push({title:'',amount:'',memberIds:availableMembers.slice(0,8).map(m=>m.id)});renderItems();$('#item-list').lastElementChild.querySelector('input').focus();preview();saveDraft();});
   $('#item-list').addEventListener('click',event=>{const button=event.target.closest('[data-remove-item]');if(!button)return;itemDrafts=readItemDrafts();itemDrafts.splice(Number(button.dataset.removeItem),1);renderItems();$('#add-item').focus();preview();saveDraft();});
   renderItems();
+  if(context.onAddMember&&!recurring&&!financialLocked){
+    form.querySelector('.participant-fieldset').insertAdjacentHTML('afterend',`<details class="entry-member-add"><summary>${t('添加参与人')}</summary><p class="form-hint">${t('添加到账本，可稍后邀请本人认领。')}</p><div class="inline-member-fields"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="inlineMemberName" maxlength="40" autocomplete="off"></label><button type="button" class="button secondary" id="entry-add-member">${t('添加并选择')}</button></div><p class="form-error" id="entry-member-error" role="alert" hidden></p></details>`);
+    const input=form.elements.inlineMemberName,button=$('#entry-add-member'),error=$('#entry-member-error');
+    input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();button.click();}});
+    button.addEventListener('click',async()=>{
+      if(addingMember)return;
+      const name=input.value.trim();error.hidden=true;
+      if(!name){error.textContent=t('请填写伙伴的称呼。');error.hidden=false;input.focus();return;}
+      const selected=splitType==='items'?new Set(readItemDrafts().flatMap(row=>row.memberIds)).size:form.querySelectorAll('[name="participant"]:checked').length;
+      if(selected>=8){error.textContent=t('每笔最多选择 8 位分摊成员。');error.hidden=false;return;}
+      addingMember=true;button.disabled=true;input.disabled=true;saveButton.disabled=true;button.textContent=t('正在添加…');
+      try{
+        const m=await context.onAddMember(name);
+        if(!form.isConnected)return;
+        if(!s.members.some(row=>row.id===m.id))s.members.push(m);
+        const i=s.members.findIndex(row=>row.id===m.id),id=escape(m.id),label=escape(m.name);
+        form.querySelector('.participant-grid').insertAdjacentHTML('beforeend',`<label class="member-check"><input type="checkbox" name="participant" value="${id}" checked>${avatar(m.name)}<span>${label}</span></label>`);
+        $('#percent-fields').insertAdjacentHTML('afterbegin',`<div class="percent-field" data-percent-member="${id}"><label for="percent-${i}">${label}</label><span class="split-input-unit"><input id="percent-${i}" class="form-input" type="number" min="0" max="100" step="0.01" inputmode="decimal" data-percent="${id}" value="0" aria-label="${t('{name}的比例',{name:label})}" aria-describedby="percent-result-${i}"><span>%</span></span><output id="percent-result-${i}" data-percent-result="${id}" class="split-converted">—</output></div>`);
+        $('#amount-fields').insertAdjacentHTML('afterbegin',`<label class="amount-field" data-amount-member="${id}"><span>${label}</span><span class="split-input-unit"><input class="form-input" inputmode="decimal" data-share-amount="${id}" placeholder="0.00" aria-label="${t('{name}承担金额',{name:label})}"><span>${escape(s.ledger.currency)}</span></span></label>`);
+        if(owner())form.elements.payer.insertAdjacentHTML('beforeend',`<option value="${id}">${label}</option>`);
+        itemDrafts=readItemDrafts();renderItems();
+        input.value='';form.querySelector('.entry-member-add').open=false;
+        updateMode();preview();await saveDraft();
+      }catch(problem){if(form.isConnected){error.textContent=errorMessage(problem);error.hidden=false;}}
+      finally{addingMember=false;if(form.isConnected){button.disabled=false;input.disabled=false;saveButton.disabled=readingReceipts;button.textContent=t(splitType==='items'?'添加参与人':'添加并选择');}}
+    });
+  }
   function renderReceipts(){
     $('#receipt-list').innerHTML=receipts.map((receipt,i)=>`<div class="receipt-edit-row">${receiptMarkup([receipt])}<button type="button" class="text-link danger-link" data-remove-receipt="${i}" aria-label="${t('移除收据 {name}',{name:escape(receipt.name)})}">${t('移除')}</button></div>`).join('');
   }
@@ -84,7 +112,7 @@ export function openExpenseEditor(context, options = {}) {
     readingReceipts=true;saveButton.disabled=true;input.disabled=true;$('#receipt-status').textContent=t('正在处理收据…');
     try{const added=[];for(const file of files)added.push(await readReceiptFile(file));if(!form.isConnected)return;receipts.push(...added);renderReceipts();saveDraft();$('#form-error').hidden=true;}
     catch(error){if(form.isConnected)formError(errorMessage(error));}
-    finally{readingReceipts=false;if(form.isConnected){saveButton.disabled=false;input.disabled=false;input.value='';$('#receipt-status').textContent='';}}
+    finally{readingReceipts=false;if(form.isConnected){saveButton.disabled=addingMember;input.disabled=false;input.value='';$('#receipt-status').textContent='';}}
   }
   $('#receipt-files')?.addEventListener('change',event=>addReceipts([...event.target.files]));
   const dropzone=$('#receipt-dropzone');
@@ -154,6 +182,7 @@ export function openExpenseEditor(context, options = {}) {
     updateMode();$('#form-error').hidden=true;preview();saveDraft();
   }));
   form.addEventListener('submit',e=>submitForm(e,async data=>{
+    if(addingMember)throw new Error('成员正在添加，请稍候再保存。');
     if(readingReceipts)throw new Error('收据正在处理，请稍候再保存。');
     const {amount,shares,items=[]}=calculate();
     const payload={title:data.get('title').trim(),date:data.get('date')||today,amountCents:amount,payerMemberId:form.elements.payer.value,shares,items,note:data.get('note').trim(),receipts};

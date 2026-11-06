@@ -124,7 +124,7 @@ test('roles and currency stay scoped to each ledger, including receipt identifie
   await command(alice,f.id,'addExpense',[expense('owner',{owner:100,[f.b]:100,[f.c]:100},300,{receipts:[pdf()]})]);
   const receipt=(await snapshot(bob,f.id)).expenses[0].receipts[0];
   assert.equal((await request(alice,'GET',`/api/ledgers/${other}`)).status,403);
-  assert.equal((await post(bob,f.id,'addMember',['错误权限'])).status,403);
+  assert.equal((await post(bob,f.id,'createInvite',[f.b])).status,403);
   await command(bob,other,'addMember',['美元账本伙伴']);
   assert.equal((await request(bob,'GET',receipt.url.replace(f.id,other))).status,403);
   assert.equal((await request(outsider,'GET',receipt.url)).status,403);
@@ -213,7 +213,7 @@ test('update revisions expose only joined ledgers and advance atomically for eve
   const initial=await version(),key=randomUUID(),args=[expense('owner',{[f.b]:100},100)];
   const id=await command(alice,f.id,'addExpense',args,key);assert.equal(await version(),initial+1n);
   await command(alice,f.id,'addExpense',args,key);assert.equal(await version(),initial+1n);
-  await post(bob,f.id,'addMember',['forbidden']);assert.equal(await version(),initial+1n);
+  await post(bob,f.id,'createInvite',[f.b]);assert.equal(await version(),initial+1n);
   const payment=await command(alice,f.id,'recordPayment',[{expenseId:id,fromMemberId:f.b,amountCents:40}]);assert.equal(await version(),initial+2n);
   await command(alice,f.id,'reversePayment',[payment]);assert.equal(await version(),initial+3n);
   await command(alice,f.id,'reverseExpense',[id]);assert.equal(await version(),initial+4n);
@@ -342,6 +342,21 @@ test('members export complete private ZIPs with old receipts and outsiders canno
   assert.equal(data.invites,undefined);assert.equal(data.claims,undefined);
   assert.equal((await fetch(`${base}/api/ledgers/${f.id}/export`,{headers:{cookie:outsider.cookie}})).status,403);
   assert.equal((await fetch(`${base}/api/ledgers/${f.id}/export`)).status,401);
+});
+
+test('members add temporary participants without granting account or invitation access',async()=>{
+  const f=await trio(),before=await snapshot(alice,f.id),key=randomUUID();
+  const temporary=await command(bob,f.id,'addMember',['同行伙伴'],key);
+  assert.equal(await command(bob,f.id,'addMember',['同行伙伴'],key),temporary);
+  const after=await consistent(f);assert.equal(after.members.length,before.members.length+1);
+  assert.equal(after.members.find(row=>row.id===temporary).uid,null);
+  assert.deepEqual(after.ledger.memberUids,before.ledger.memberUids);
+  assert.equal((await post(bob,f.id,'createInvite',[temporary])).status,403);
+  assert.equal((await post(outsider,f.id,'addMember',['外人'])).status,403);
+  const id=await command(bob,f.id,'addExpense',[expense(f.b,{[f.b]:100,[temporary]:100},200)]);
+  assert.equal((await snapshot(alice,f.id)).expenses.find(row=>row.id===id).shares[temporary],100);
+  await command(alice,f.id,'setLedgerStatus',['archived']);
+  assert.equal((await post(bob,f.id,'addMember',['归档后'])).status,400);
 });
 
 test('a resumed draft retry after a new login returns the original expense without duplicating history',async()=>{

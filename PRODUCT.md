@@ -21,6 +21,9 @@ People sharing expenses. The current implementation targets friends, roommates a
 - Email verification/recovery and +86/WeChat/QQ login are later work; unrestricted public registration is not ready.
 - Repayments are recorded confirmations, not payment processing. Opening or copying a message does not mean it was sent.
 - A temporary member is not an authenticated account. Shared-ledger claiming requires an account and ledger-owner approval.
+- Any current member of an active ledger can add a named temporary participant,
+  including directly while entering an expense. Adding a name does not grant
+  account access; invitation creation and claim approval remain owner-only.
 - Money uses integer cents. A ledger has one currency. No cross-currency balance aggregation.
 - Saved-expense corrections require payer/owner permission and a reason. Effective repayments lock financial fields until reversed; metadata and receipts remain editable. Conflicting versions never silently overwrite.
 - Expense history preserves creation, corrections, payment confirmations and reversals with actors/times and attachment versions. Unknown legacy facts remain unknown. This is expense history, not a ledger-membership administration audit.

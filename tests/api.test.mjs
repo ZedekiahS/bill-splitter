@@ -99,7 +99,7 @@ test('invitation approval binds only the claimant and preserves member identity'
 });
 test('members cannot impersonate another payer or administer the ledger',async()=>{
   const f=await fixture();await join(f);
-  for(const body of [{type:'addMember',args:['Mallory']},{type:'addExpense',args:[payload(f)]}])assert.equal((await request('POST',`/api/ledgers/${f.ledger}/commands`,body,bob)).statusCode,403);
+  for(const body of [{type:'createInvite',args:[f.member]},{type:'addExpense',args:[payload(f)]}])assert.equal((await request('POST',`/api/ledgers/${f.ledger}/commands`,body,bob)).statusCode,403);
   const expense=await command(f.ledger,'addExpense',[{...payload(f),payerMemberId:f.member}],bob);assert.ok(expense);
 });
 test('concurrent writes and retries preserve one idempotent expense',async()=>{
