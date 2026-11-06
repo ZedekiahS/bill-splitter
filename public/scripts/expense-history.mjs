@@ -1,3 +1,4 @@
+import {randomId} from './random-id.mjs';
 export function expenseVersion(expense) {
   const {title,date,amountCents,payerMemberId,shares,items=[],note='',receipts=[],status,repaid={}}=expense;
   return structuredClone({title,date,amountCents,payerMemberId,shares,items,note,receipts,status,repaid});
@@ -17,6 +18,6 @@ export function ensureHistory(state,ledgerId,expenseId) {
 }
 export function appendHistory(state,ledgerId,expenseId,user,at,event) {
   const expense=state.expenses[ledgerId][expenseId];
-  ensureHistory(state,ledgerId,expenseId).push({id:crypto.randomUUID(),actorUid:user.uid,actorName:Object.values(state.members[ledgerId]).find(member=>member.uid===user.uid)?.name||user.displayName||null,at,...event});
+  ensureHistory(state,ledgerId,expenseId).push({id:randomId(),actorUid:user.uid,actorName:Object.values(state.members[ledgerId]).find(member=>member.uid===user.uid)?.name||user.displayName||null,at,...event});
   expense.version=(expense.version||1)+1;
 }

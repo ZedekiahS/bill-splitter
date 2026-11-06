@@ -1,15 +1,10 @@
 import { assertCents, remainingFor, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
 import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
 import { expenseVersion, legacyHistory, ensureHistory, appendHistory } from './expense-history.mjs';
+import {randomId as newId} from './random-id.mjs';
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const withId = (id, value) => ({ ...value, id });
-function newId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(24);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
-}
 function text(value, label, max = 120) {
   const result = typeof value === "string" ? value.trim() : "";
   if (!result || result.length > max) throw new Error(`${label}不能为空，且不能超过 ${max} 个字。`);

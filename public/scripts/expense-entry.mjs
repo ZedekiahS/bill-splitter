@@ -4,6 +4,7 @@ import { itemizedShares } from './expense-features.mjs';
 import { readReceiptFile } from './receipt-files.mjs';
 import { receiptMarkup } from './receipt-viewer.mjs';
 import { draftWriter } from './expense-drafts.mjs';
+import {randomId} from './random-id.mjs';
 
 export function openExpenseEditor(context, options = {}) {
   const { snapshot:s, user, isOwner, openDialog, submitForm, errorSlot, formError, onSave, today } = context;
@@ -161,7 +162,7 @@ export function openExpenseEditor(context, options = {}) {
     if(recurring){payload.sourceTemplateId=initial.id;payload.sourceDate=options.occurrence.date;}
     if(context.draft){
       const signature=JSON.stringify([options.expenseId,options.templateMode,options.templateId,payload]);
-      if(attempt?.signature!==signature)attempt={signature,key:crypto.randomUUID()};
+      if(attempt?.signature!==signature)attempt={signature,key:randomId()};
       await saveDraft(true);
     }
     await onSave(payload,{...options,draftRequestKey:attempt?.key,draftCommitted:async()=>{draftComplete=true;await writer?.clear();}});

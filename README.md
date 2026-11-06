@@ -122,10 +122,10 @@ npm test
 npm run test:api
 ```
 
-All 182 local tests pass: 65 original calculation regressions, 42 shared-ledger
+All 183 local tests pass: 65 original calculation regressions, 42 shared-ledger
 calculation/storage tests, 7 localization regressions, 4 expense-search
 regressions, 24 recurring/item/attachment checks, 13 feature-storage checks,
-7 shared-session UI regressions, 6 API-client retry/error checks, and 5 automatic
+7 shared-session UI regressions, 7 API-client retry/error/LAN checks, and 5 automatic
 synchronization scheduling checks, 6 draft persistence checks and 3 export checks.
 The 41 PostgreSQL API tests exercise real authenticated transactions, permissions,
 concurrency and private files, including 28 scenarios through an actual HTTP

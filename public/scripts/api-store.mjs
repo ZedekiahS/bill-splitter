@@ -1,11 +1,12 @@
 // Same-origin session cookies. No account ID or credential is accepted from UI payloads.
+import {randomId} from './random-id.mjs';
 const pending=new Map();
 export async function apiRequest(path,{method='GET',body,idempotencyKey}={}){
   const content=body===undefined?undefined:JSON.stringify(body),signature=method+path+(content||'');
   const headers={};
   if(method!=='GET'){
     headers['Content-Type']='application/json';headers['X-Bill-Splitter']='1';
-    if(!pending.has(signature))pending.set(signature,crypto.randomUUID());
+    if(!pending.has(signature))pending.set(signature,randomId());
     headers['Idempotency-Key']=idempotencyKey||pending.get(signature);
   }
   let response;

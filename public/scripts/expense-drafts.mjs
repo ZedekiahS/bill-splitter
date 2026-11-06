@@ -1,3 +1,4 @@
+import {randomId} from './random-id.mjs';
 const DB_NAME='bill-splitter-drafts-v1';
 export const draftScope=(mode,uid,ledgerId)=>JSON.stringify([mode,uid,ledgerId]);
 export function draftKey(scope,options={}){
@@ -28,7 +29,7 @@ export function createDraftStore(factory=globalThis.indexedDB){
     put:(record,revision=null)=>transaction('readwrite',(store,done,fail)=>{
       store.get(record.key).onsuccess=e=>{
         if((e.target.result?.revision||null)!==revision)return fail(conflict());
-        const next={...record,revision:crypto.randomUUID(),updatedAt:new Date().toISOString()};store.put(next);done(next);
+        const next={...record,revision:randomId(),updatedAt:new Date().toISOString()};store.put(next);done(next);
       };
     }),
     remove:(key,revision)=>transaction('readwrite',(store,done,fail)=>{

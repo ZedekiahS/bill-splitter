@@ -5,6 +5,26 @@ afterEach(()=>{globalThis.fetch=originalFetch;});
 const fresh=()=>import(`../public/scripts/api-store.mjs?case=${crypto.randomUUID()}`);
 const reply=(status,body)=>({ok:status>=200&&status<300,status,json:async()=>body});
 
+test('LAN HTTP supports write keys, draft revisions and expense history without randomUUID',async()=>{
+  const {apiRequest}=await fresh();
+  const {createDraftStore}=await import('../public/scripts/expense-drafts.mjs');
+  const {appendHistory}=await import('../public/scripts/expense-history.mjs');
+  const {IDBFactory}=await import('fake-indexeddb');
+  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto'),native=globalThis.crypto,ids=[];
+  Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues:bytes=>native.getRandomValues(bytes)}});
+  try{
+    globalThis.fetch=async(_path,options)=>{ids.push(options.headers['Idempotency-Key']);return reply(200,{result:'saved'});};
+    assert.equal(await apiRequest('/api/ledgers/lan/commands',{method:'POST',body:{type:'addExpense',args:[]}}),'saved');
+    const store=createDraftStore(new IDBFactory()),saved=await store.put({key:'lan',scope:'alice',form:{fields:{title:''}}});
+    ids.push(saved.revision);assert.equal((await store.get('lan')).form.fields.title,'');
+    const state={members:{lan:{a:{uid:'alice',name:'Alice'}}},expenses:{lan:{e:{history:[]}}}};
+    appendHistory(state,'lan','e',{uid:'alice'},'2026-11-06T12:00:00Z',{type:'created'});
+    ids.push(state.expenses.lan.e.history[0].id);
+    for(const id of ids)assert.match(id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    assert.equal(new Set(ids).size,ids.length);
+  }finally{Object.defineProperty(globalThis,'crypto',descriptor);}
+});
+
 for(const failure of ['offline','server-error','lost-response'])test(`${failure}: an explicit retry preserves the financial idempotency key`,async()=>{
   const {apiRequest}=await fresh(),calls=[];
   globalThis.fetch=async(path,options)=>{calls.push({path,options});if(calls.length>1)return reply(200,{result:'saved-once'});if(failure==='offline')throw new TypeError('network');if(failure==='lost-response')return {ok:true,status:200,json:async()=>{throw new SyntaxError('truncated');}};return reply(503,{error:{message:'服务暂时不可用，请稍后重试。'}});};

@@ -39,7 +39,7 @@ node tests/expense-drafts.test.mjs
 node tests/ledger-export.test.mjs
 ```
 
-All 182 local tests pass across these eleven suites. The API-client suite uses
+All 183 local tests pass across these eleven suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -52,7 +52,7 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `expense-features.test.mjs` | 24 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
 | `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
-| `api-client.test.mjs` | 6 | Offline/503/lost-response retry keys, rejected inputs, expired login and concurrent duplicates |
+| `api-client.test.mjs` | 7 | Offline/503/lost-response retry keys, rejected inputs, expired login, concurrent duplicates and LAN HTTP IDs |
 | `auto-sync.test.mjs` | 5 | Single-flight scheduling, hidden pages, network backoff/recovery, expired session and page lifecycle |
 | `expense-drafts.test.mjs` | 6 | Incomplete inputs and attachment recovery, scope isolation, competing tabs, queued writes, quota errors and persistent retry keys |
 | `ledger-export.test.mjs` | 3 | Stable format and cents, private-field exclusion, CSV quoting/formulas, historical attachments and independently decoded ZIP |
