@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server/start.mjs",
     "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs",
-    "test": "node tests/bill-calculations.test.mjs && node tests/ledger-core.test.mjs && node tests/i18n.test.mjs && node tests/expense-search.test.mjs && node tests/expense-features.test.mjs && node tests/expense-features-store.test.mjs && node tests/invitation-navigation.test.mjs && node tests/api-client.test.mjs && node tests/auto-sync.test.mjs && node tests/expense-drafts.test.mjs && node tests/ledger-export.test.mjs && node tests/settlement-plans.test.mjs && node tests/reliability.test.mjs && node tests/entry-context.test.mjs && node tests/participant-groups.test.mjs",
+    "test": "node tests/bill-calculations.test.mjs && node tests/ledger-core.test.mjs && node tests/i18n.test.mjs && node tests/expense-search.test.mjs && node tests/expense-features.test.mjs && node tests/expense-features-store.test.mjs && node tests/invitation-navigation.test.mjs && node tests/api-client.test.mjs && node tests/auto-sync.test.mjs && node tests/expense-drafts.test.mjs && node tests/ledger-export.test.mjs && node tests/settlement-plans.test.mjs && node tests/reliability.test.mjs && node tests/entry-context.test.mjs && node tests/participant-groups.test.mjs && node tests/editor-recovery.test.mjs",
     "test:api": "node --env-file-if-exists=.env.test --test --test-concurrency=1 tests/api.test.mjs tests/api-scenarios.test.mjs"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "yazl": "^3.3.1"
   },
   "devDependencies": {
-    "fake-indexeddb": "^6.2.7"
+    "fake-indexeddb": "^6.2.7",
+    "jsdom": "^31.0.0"
   }
 }

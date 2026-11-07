@@ -5,6 +5,25 @@ afterEach(()=>{globalThis.fetch=originalFetch;});
 const fresh=()=>import(`../public/scripts/api-store.mjs?case=${crypto.randomUUID()}`);
 const reply=(status,body)=>({ok:status>=200&&status<300,status,json:async()=>body});
 
+test('unknown payment identity survives an expired login or throttled retry',async()=>{
+ const {paymentSubmission}=await import('../public/scripts/payment-submission.mjs'),calls=[];
+ const statuses=[undefined,401,403,429,408];
+ const store={mode:'api',currentUser:{uid:'retry-user'},saveDraftCommand:async(_id,_type,args,key)=>{calls.push({args,key});if(statuses.length){const status=statuses.shift();throw Object.assign(new Error('Unavailable'),{status});}return 'receipt';}};
+ const ledger=crypto.randomUUID(),payload={expenseId:'bill',fromMemberId:'debtor',amountCents:5000};
+ const submission=paymentSubmission(store,ledger,'bill','debtor');
+ for(let i=0;i<5;i++){await assert.rejects(submission.submit({...payload,amountCents:5000+i}));assert.ok(submission.pending);}
+ assert.equal(await submission.submit({...payload,amountCents:1}),'receipt');assert.equal(submission.pending,null);
+ assert.equal(new Set(calls.map(c=>c.key)).size,1);assert.ok(calls.every(c=>c.args[0].amountCents===5000));
+});
+
+test('definitive payment conflict permits a reviewed new request with a different identity',async()=>{
+ const {paymentSubmission}=await import('../public/scripts/payment-submission.mjs'),calls=[];
+ const store={mode:'api',currentUser:{uid:'retry-user'},saveDraftCommand:async(_id,_type,args,key)=>{calls.push({args,key});if(calls.length===1)throw Object.assign(new Error('Conflict'),{status:409});return 'receipt';}};
+ const submission=paymentSubmission(store,crypto.randomUUID(),'bill','debtor');
+ await assert.rejects(submission.submit({expenseId:'bill',fromMemberId:'debtor',expectedVersion:1}));assert.equal(submission.pending,null);
+ await submission.submit({expenseId:'bill',fromMemberId:'debtor',expectedVersion:2});assert.notEqual(calls[0].key,calls[1].key);assert.equal(calls[1].args[0].expectedVersion,2);
+});
+
 test('LAN HTTP supports write keys, draft revisions and expense history without randomUUID',async()=>{
   const {apiRequest}=await fresh();
   const {createDraftStore}=await import('../public/scripts/expense-drafts.mjs');

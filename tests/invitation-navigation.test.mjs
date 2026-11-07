@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import {createStateStore} from '../public/scripts/ledger-domain.mjs';
+import {paymentSubmission} from '../public/scripts/payment-submission.mjs';
 import { parseMoney, formatMoney, remainingFor } from '../public/scripts/ledger-core.mjs';
 
 const source = (await readFile(new URL('../public/scripts/app.mjs', import.meta.url), 'utf8'))
@@ -13,7 +15,7 @@ function fixture(status) {
     history:{replaceState(_state,_title,url){location.href=String(url);}},
     document:{querySelectorAll(){return [];},querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
     window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
-    createDraftStore:()=>({}),calls,parseMoney,formatMoney,remainingFor,
+    createDraftStore:()=>({}),calls,parseMoney,formatMoney,remainingFor,paymentSubmission,
   });
   vm.runInContext(source,context);
   vm.runInContext(`state.starting=false;state.claimSubmitted=true;
@@ -132,4 +134,34 @@ test('mobile filter collapse preserves conditions and describes hidden member/da
  const summary=vm.runInContext('expenseFilterSummary()',f.context);
  assert.match(summary,/Ann.*参与人.*2026-11-03.*2026-11-04/);
  await f.handlers.click({target:{closest:()=>toggle}});assert.equal(panel.hidden,false);
+});
+
+test('payment dialog retries a lost success response without changing the original payment',async()=>{
+ const f=fixture('accepted'),user={uid:'bob',displayName:'Bob'};
+ const state={ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}};
+ const engine=createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,'2026-11-07T12:00:00Z')});
+ const ledger=await engine.createLedger({title:'Retry',currency:'CNY'}),debtor=await engine.addMember(ledger,'Alice');
+ const expense=await engine.addExpense(ledger,{title:'Dinner',date:'2026-11-07',payerMemberId:'owner',amountCents:10000,shares:{[debtor]:10000}});
+ const {createApiStore}=await import(`../public/scripts/api-store.mjs?retry=${crypto.randomUUID()}`),originalFetch=globalThis.fetch;
+ const cache=new Map(),writes=[];let dropped=2;
+ globalThis.fetch=async(_path,options)=>{
+   if(options.method==='GET')return {ok:true,status:200,json:async()=>engine.loadLedger(ledger)};
+   const body=JSON.parse(options.body),key=options.headers['Idempotency-Key'];writes.push({key,body});
+   if(!cache.has(key))cache.set(key,await engine[body.type](ledger,...body.args));
+   if(dropped-->0)throw new TypeError('response lost after commit');
+   return {ok:true,status:200,json:async()=>({result:cache.get(key)})};
+ };
+ try{
+   Object.assign(f.context,{apiStore:createApiStore(user),snapshot:await engine.loadLedger(ledger),expense,debtor});
+   vm.runInContext(`state.store=apiStore;state.snapshot=snapshot;openDialog=()=>{};errorSlot=()=>'';finishSave=async()=>{};
+     submitForm=(event,cb)=>cb(new Map([['amount','50'],['date','2026-11-07'],['note','One actual transfer']]));paymentDialog(expense,debtor);`,f.context);
+   const submit=()=>f.nodes.get('#payment-form').handlers.submit({});
+   for(let i=0;i<2;i++){await assert.rejects(submit(),/核实/);f.nodes.get('#payment-review').checked=true;}
+   await submit();
+   const final=await engine.loadLedger(ledger);
+   assert.equal(final.payments.length,1,'one real payment must produce one journal entry');
+   assert.equal(remainingFor(final.expenses[0],debtor),5000);
+   assert.equal(new Set(writes.map(w=>w.key)).size,1);
+   assert.deepEqual(writes[0].body,writes[2].body);
+ }finally{globalThis.fetch=originalFetch;}
 });

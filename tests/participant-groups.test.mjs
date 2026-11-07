@@ -49,9 +49,10 @@ test('deactivation stays visible in groups; unused member removal removes refere
   const f=await fixture(),[m]=await f.a.addMembers(f.id,[{name:'Guest',create:true,expectedMatches:[]}]);
   const g=await f.a.saveParticipantGroup(f.id,{name:'Guests',memberIds:[m.id]});
   await f.a.setMemberStatus(f.id,m.id,'inactive');assert.deepEqual((await f.a.loadLedger(f.id)).participantGroups[0].memberIds,[m.id]);
-  await assert.rejects(f.a.saveParticipantGroup(f.id,{name:'Guests',memberIds:[m.id],expectedVersion:1},g.id));
-  await f.a.removeMember(f.id,m.id);const updated=(await f.a.loadLedger(f.id)).participantGroups[0];assert.deepEqual(updated.memberIds,[]);assert.equal(updated.version,2);
-  await assert.rejects(f.a.deleteParticipantGroup(f.id,g.id,1));await f.a.deleteParticipantGroup(f.id,g.id,2);assert.equal((await f.a.loadLedger(f.id)).participantGroups.length,0);
+  const renamed=await f.a.saveParticipantGroup(f.id,{name:'Friday guests',memberIds:[m.id],expectedVersion:1},g.id);assert.deepEqual(renamed.memberIds,[m.id]);
+  await assert.rejects(f.a.saveParticipantGroup(f.id,{name:'New group',memberIds:[m.id]}));
+  await f.a.removeMember(f.id,m.id);const updated=(await f.a.loadLedger(f.id)).participantGroups[0];assert.deepEqual(updated.memberIds,[]);assert.equal(updated.version,3);
+  await assert.rejects(f.a.deleteParticipantGroup(f.id,g.id,2));await f.a.deleteParticipantGroup(f.id,g.id,3);assert.equal((await f.a.loadLedger(f.id)).participantGroups.length,0);
 });
 test('full export/import restores group names and remaps member identities; older backups remain valid',async()=>{
   const f=await fixture();await f.a.saveParticipantGroup(f.id,{name:'Trip',memberIds:['owner','other']});

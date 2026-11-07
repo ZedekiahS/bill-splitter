@@ -1,5 +1,6 @@
 import {calendarDate} from './ledger-time.mjs';
 import { currentSession, createApiStore, signOut, apiRequest, uploadBackup } from './api-store.mjs';
+import {paymentSubmission} from './payment-submission.mjs';
 import accountMessages from './account-messages.mjs';
 import { t, getLanguage, setLanguage, translatePage, formatDate, translateError, registerMessages } from './i18n.mjs';
 import messages from './app-messages.mjs';
@@ -399,7 +400,18 @@ function paymentDialog(expenseId,fromId) {
   const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
   const reviewOf=row=>({toMemberId:row.payerMemberId,expectedVersion:row.version||1,expectedRemaining:row.status==='reversed'?0:remainingFor(row,fromId)});
   const reviewed=reviewOf(e);let displayed=reviewed;
+  const submission=paymentSubmission(state.store,state.snapshot.ledger.id,expenseId,fromId);
   openDialog(t('确认收到一笔还款'),`<p class="payment-direction" id="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(e.payerMemberId))}</p><p class="muted" id="payment-outstanding">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<label id="payment-review-label" class="form-hint" hidden><input type="checkbox" id="payment-review"> ${t('已核对新的收款人和待收金额')}</label><div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
+  const pendingUI=()=>{
+    const pending=submission.pending,form=$('#payment-form');
+    for(const name of ['amount','date','note'])if(form.elements?.[name]){
+      form.elements[name].readOnly=Boolean(pending);
+      if(pending)form.elements[name].value=name==='amount'?amountText(pending.payload.amountCents):pending.payload[name]||'';
+    }
+    const button=form.querySelector?.('[type="submit"]');if(button){button.textContent=t(pending?'核实本次收款结果':'确认已收到');button.dataset.label=button.textContent;}
+    if(pending){$('#payment-direction').textContent=`${memberName(fromId)} → ${memberName(pending.payload.toMemberId)}`;$('#payment-outstanding').textContent=t('本次收款 {amount}，保存结果待核实。',{amount:money(pending.payload.amountCents)});$('#payment-review-label').hidden=true;}
+  };
+  pendingUI();
   dialogRefresh=()=>{
     const latest=state.snapshot.expenses.find(row=>row.id===expenseId);if(!latest)return;
     const next=reviewOf(latest);
@@ -407,15 +419,18 @@ function paymentDialog(expenseId,fromId) {
     $('#payment-outstanding').textContent=`${latest.title} · ${t('剩余待收 {amount}',{amount:money(next.expectedRemaining)})}`;
     if(JSON.stringify(next)!==JSON.stringify(displayed)){$('#payment-review').checked=false;displayed=next;}
     $('#payment-review-label').hidden=JSON.stringify(displayed)===JSON.stringify(reviewed);
+    pendingUI();
   };
   $('#payment-form').addEventListener('submit',event=>submitForm(event,async data=>{
-    if(JSON.stringify(displayed)!==JSON.stringify(reviewed)&&!$('#payment-review').checked)throw new Error('收款信息已改变，请核对收款人和待收金额后重新确认。');
-    const payload={...displayed,expenseId,fromMemberId:fromId,amountCents:parseMoney(data.get('amount')),date:data.get('date'),note:data.get('note').trim()};
-    try {await state.store.recordPayment(state.snapshot.ledger.id,payload);}
+    if(!submission.pending&&JSON.stringify(displayed)!==JSON.stringify(reviewed)&&!$('#payment-review').checked)throw new Error('收款信息已改变，请核对收款人和待收金额后重新确认。');
+    const payload=submission.pending?.payload||{...displayed,expenseId,fromMemberId:fromId,amountCents:parseMoney(data.get('amount')),date:data.get('date'),note:data.get('note').trim()};
+    try {await submission.submit(payload);}
     catch(error){
       // Another member may have recorded a receipt while this form was open.
       // Keep the entered amount and never retry a financial write automatically.
       try {await refreshSnapshotOnly();dialogRefresh?.();}catch{/* Preserve the original write error if refreshing also fails. */}
+      pendingUI();
+      if(submission.pending&&![401,403].includes(error.status))throw new Error('暂未确认本次收款是否保存。请核实结果，无需重新记一笔。');
       throw error;
     }
     await finishSave(t('已记录本次收款，剩余金额已更新。'));

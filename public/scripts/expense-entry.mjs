@@ -29,6 +29,7 @@ export function openExpenseEditor(context, options = {}) {
   const recovered=context.draft?.record?.form,continuation=options.continuation;
   let memberTools,saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
   let splitType=recovered?.splitType||continuation?.splitType||(initial.items?.length?'items':initial.shares?'amount':'equal'), amountDraftInitialized=recovered?.amountDraftInitialized??Boolean(initial.shares||continuation?.splitType==='amount');
+  let manualAmount=recovered?.manualAmount??(recovered?.splitType==='items'?'':recovered?.fields?.amount??(initial.amountCents?amountText(initial.amountCents):''));
   let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds]}));
   let receipts=recovered?.receipts||(editing?[...(initial.receipts||[])]:[]), readingReceipts=false,addingMember=false,assignmentMember=!financialLocked&&!recurring&&context.onAddMember?recovered?.assignmentMember||null:null;
   const initialShares=initial.shares?consumptionShares(initial):{};
@@ -99,7 +100,7 @@ export function openExpenseEditor(context, options = {}) {
   function updateMode(){
     const itemMode=splitType==='items';memberTools?.modeChanged();
     if($('#entry-member-feedback'))$('#entry-member-feedback').hidden=true;
-    if(!itemMode)assignmentMember=null;renderItemPicker();
+    renderItemPicker();
     if($('#entry-add-member')&&!addingMember)$('#entry-add-member').textContent=t(itemMode?'添加参与人':'添加并选择');
     $('#percent-fields').hidden=splitType!=='percent';$('#amount-fields').hidden=splitType!=='amount';$('#item-fields').hidden=!itemMode;
     form.querySelector('.participant-fieldset').hidden=itemMode;form.elements.amount.readOnly=itemMode||financialLocked;
@@ -275,6 +276,8 @@ export function openExpenseEditor(context, options = {}) {
         amountDraftInitialized=true;
       }catch{/* Leave fields empty until an amount and participants are available. */}
     }
+    if(splitType!=='items')manualAmount=form.elements.amount.value;
+    if(splitType==='items'&&button.dataset.split!=='items')form.elements.amount.value=manualAmount;
     splitType=button.dataset.split;
     form.querySelectorAll('[data-split]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});
     updateMode();$('#form-error').hidden=true;preview();saveDraft();
@@ -336,7 +339,7 @@ export function openExpenseEditor(context, options = {}) {
       }
     });
   }
-  const capture=()=>({splitType,assignmentMember,participantTools:memberTools?.capture(),percentEdited:[...percentEdited],amountDraftInitialized,items:readItemDrafts(),receipts,
+  const capture=()=>({splitType,manualAmount:splitType==='items'?manualAmount:form.elements.amount.value,assignmentMember,participantTools:memberTools?.capture(),percentEdited:[...percentEdited],amountDraftInitialized,items:readItemDrafts(),receipts,
     fields:Object.fromEntries(['amount','title','payer','date','note','changeReason','frequency','startDate'].filter(name=>form.elements[name]).map(name=>[name,form.elements[name].value])),
     participants:[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value),
     'data-percent':draftValues('data-percent'),'data-share-amount':draftValues('data-share-amount')});

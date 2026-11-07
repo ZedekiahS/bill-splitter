@@ -157,7 +157,7 @@ export function createStateStore({read,mutate,user}) {
           if(!prior||ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
           if(payload.expectedVersion!==prior.version)throw Object.assign(new Error('组合已更新，请重新打开后修改。'),{statusCode:409});
         }
-        const next=groupData(payload,state.members[id]);
+        const next=groupData(payload,state.members[id],prior);
         if(Object.entries(groups).some(([key,g])=>key!==groupId&&nameKey(g.name)===nameKey(next.name)))throw new Error('已有同名组合，请换一个名称。');
         const key=groupId||newId();state.participantGroups||={};state.participantGroups[id]||={};
         state.participantGroups[id][key]={...next,createdByUid:prior?.createdByUid||user.uid,createdAt:prior?.createdAt||at,updatedAt:at,version:(prior?.version||0)+1};

@@ -209,3 +209,12 @@ and two authenticated API scenarios: atomic mixed-name batches, stale name revie
 idempotent retries, shared group permissions/version conflicts, inactive/removed members,
 and backup restoration. Use the isolated regression schema for API runs while phone
 preview is running. See `docs/review/participant-groups-2026-11-07.md`.
+
+The retry/editor follow-up adds real DOM regression coverage via jsdom in
+`editor-recovery.test.mjs`: manual totals, pending item participants, existing
+group drafts, concurrent edits/deletion and inactive-member retention. Payment
+dialog tests exercise the actual API client after a lost successful response.
+The three-account PostgreSQL scenarios inject offline/lost/truncated/5xx responses
+and verify one journal entry after retries and tab reload. Current totals: 223
+local tests and 56 API tests. See
+`docs/review/retry-and-editor-recovery-2026-11-07.md` for scope and limitations.

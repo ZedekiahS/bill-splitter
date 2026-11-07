@@ -24,11 +24,11 @@ export function prepareMemberBatch(entries,members){
     return {name};
   });
 }
-export function groupData(payload,members){
+export function groupData(payload,members,prior=null){
   const name=typeof payload?.name==='string'?payload.name.trim():'';
   if(!name||name.length>40)throw new Error('组合名称需填写 1 至 40 个字。');
   const ids=payload.memberIds;
   if(!Array.isArray(ids)||!ids.length||ids.length>50||new Set(ids).size!==ids.length)throw new Error('每个组合请选择 1 至 50 位不同成员。');
-  if(ids.some(id=>typeof id!=='string'||!Object.hasOwn(members,id)||members[id].status==='inactive'))throw new Error('组合中有已停用或已移除的成员，请重新选择。');
+  if(ids.some(id=>typeof id!=='string'||!Object.hasOwn(members,id)||members[id].status==='inactive'&&!prior?.memberIds.includes(id)))throw new Error('组合中有已停用或已移除的成员，请重新选择。');
   return {name,memberIds:[...ids]};
 }

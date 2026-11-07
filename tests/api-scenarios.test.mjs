@@ -10,6 +10,8 @@ import {unzip} from './zip-helper.mjs';
 import {repaymentPlan} from '../public/scripts/settlement-plans.mjs';
 import {ledgerExport} from '../public/scripts/ledger-export.mjs';
 import {calendarDate} from '../public/scripts/ledger-time.mjs';
+import {createApiStore} from '../public/scripts/api-store.mjs';
+import {paymentSubmission} from '../public/scripts/payment-submission.mjs';
 
 const target=new URL(process.env.TEST_DATABASE_URL||'http://missing');
 if(!['postgres:','postgresql:'].includes(target.protocol)||!['127.0.0.1','localhost'].includes(target.hostname)||!target.pathname.endsWith('_test'))throw new Error('Use a disposable loopback PostgreSQL database ending _test.');
@@ -573,4 +575,58 @@ test('shared participant groups enforce versions, isolate ledgers, synchronize a
  assert.ok(restored.participantGroups[0].memberIds.every(id=>restored.members.some(m=>m.id===id)));assert.equal((await request(chen,'GET',`/api/ledgers/${copied}`)).status,403);
  await command(bob,f.id,'deleteParticipantGroup',[g.id,2]);const after=await consistent(f);assert.deepEqual(after.participantGroups,[]);assert.deepEqual(after.members,snapshotBefore.members);assert.deepEqual(after.expenses,snapshotBefore.expenses);
  await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal((await post(bob,f.id,'saveParticipantGroup',[{name:'Archived',memberIds:[f.b]}])).status,400);
+});
+
+test('three accounts see one receipt after offline and repeated lost-response retries, including a tab reload',async()=>{
+ const f=await trio(),realFetch=globalThis.fetch,storage=new Map(),storageDescriptor=Object.getOwnPropertyDescriptor(globalThis,'sessionStorage');
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}});
+ try{
+  for(const fault of ['offline-before-send','lost-response','truncated-response','server-error']){
+   const id=await command(alice,f.id,'addExpense',[expense('owner',{[f.b]:10000},10000,{title:fault})]),writes=[];
+   let failures=2;
+   globalThis.fetch=async(url,options)=>{
+    if(!String(url).startsWith('/api/'))return realFetch(url,options);
+    const payment=options.method==='POST',fail=payment&&failures-->0;
+    if(payment)writes.push({key:options.headers['Idempotency-Key'],body:options.body});
+    if(fail&&fault==='offline-before-send')throw new TypeError('offline');
+    const response=await realFetch(base+url,{...options,headers:{...options.headers,origin,cookie:alice.cookie}});
+    if(fail){
+     // Consume the successful HTTP response so the database commit is certain,
+     // then simulate the browser failing to receive or parse that response.
+     assert.equal(response.status,200);await response.text();
+     if(fault==='server-error')return {ok:false,status:503,json:async()=>({error:{message:'Unavailable'}})};
+     if(fault==='truncated-response')return {ok:true,status:200,json:async()=>{throw new SyntaxError('truncated');}};
+     throw new TypeError('response lost after commit');
+    }
+    return response;
+   };
+   const store=createApiStore(alice),payload={expenseId:id,fromMemberId:f.b,toMemberId:'owner',expectedVersion:1,expectedRemaining:10000,amountCents:5000,date:'2026-11-07',note:'One actual transfer'};
+   let submission=paymentSubmission(store,f.id,id,f.b);
+   await assert.rejects(submission.submit(payload));assert.ok(submission.pending);assert.equal(storage.size,1);
+   const fresh=await import(`../public/scripts/payment-submission.mjs?reload=${randomUUID()}`);
+   submission=fresh.paymentSubmission(store,f.id,id,f.b);assert.deepEqual(submission.pending.payload,payload);
+   // A newer balance, changed inputs or payer must not mutate an unknown write.
+   const changed={...payload,expectedVersion:2,expectedRemaining:5000,amountCents:2500,toMemberId:f.c};
+   await assert.rejects(submission.submit(changed));await submission.submit(changed);
+   assert.equal(storage.size,0);assert.equal(new Set(writes.map(w=>w.key)).size,1);assert.equal(new Set(writes.map(w=>w.body)).size,1);
+   globalThis.fetch=realFetch;
+   const views=await consistent(f),payments=views.payments.filter(p=>p.expenseId===id);
+   assert.equal(payments.length,1);assert.equal(payments[0].amountCents,5000);assert.equal(payments[0].toMemberId,'owner');
+   assert.equal(remainingFor(views.expenses.find(e=>e.id===id),f.b),5000);
+  }
+ }finally{globalThis.fetch=realFetch;if(storageDescriptor)Object.defineProperty(globalThis,'sessionStorage',storageDescriptor);else delete globalThis.sessionStorage;}
+});
+
+test('group rename retains inactive members across accounts without permitting new inactive or foreign members',async()=>{
+ const f=await trio(),g=await command(bob,f.id,'saveParticipantGroup',[{name:'Dinner',memberIds:[f.b,f.c]}]);
+ await command(alice,f.id,'setMemberStatus',[f.b,'inactive']);await command(alice,f.id,'setMemberStatus',[f.c,'inactive']);
+ const renamed=await command(bob,f.id,'saveParticipantGroup',[{name:'Friday dinner',memberIds:[f.b,f.c],expectedVersion:1},g.id]);
+ assert.deepEqual(renamed.memberIds,[f.b,f.c]);assert.deepEqual((await consistent(f)).participantGroups,[renamed]);
+ assert.equal((await post(alice,f.id,'saveParticipantGroup',[{name:'Stale',memberIds:['owner'],expectedVersion:1},g.id])).status,409);
+ assert.equal((await post(alice,f.id,'saveParticipantGroup',[{name:'New inactive',memberIds:[f.b]}])).status,400);
+ const other=await command(alice,f.id,'saveParticipantGroup',[{name:'Other',memberIds:['owner']}]);
+ assert.equal((await post(alice,f.id,'saveParticipantGroup',[{name:'Other',memberIds:['owner',f.b],expectedVersion:1},other.id])).status,400);
+ assert.equal((await post(alice,f.id,'saveParticipantGroup',[{name:'Foreign',memberIds:['foreign'],expectedVersion:2},g.id])).status,400);
+ await command(alice,f.id,'setMemberStatus',[f.b,'active']);await command(alice,f.id,'setMemberStatus',[f.c,'active']);
+ const final=await consistent(f);assert.deepEqual(final.participantGroups.find(row=>row.id===g.id).memberIds,[f.b,f.c]);
 });
