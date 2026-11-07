@@ -310,7 +310,7 @@ test('a new expense retains integer shares, stable member IDs and an active stat
 test('partial repayments retain their journal record and update the expense remainder', async () => {
   const f = await fixture();
   const expenseId = await addDinner(f);
-  const paymentId = await f.store.recordPayment(f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE, note: '已核对' });
+  const paymentId = await reviewedPayment(f.store, f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE, note: '已核对' });
   const snapshot = await makeStore(f.storage).loadLedger(f.ledgerId);
   const payment = snapshot.payments.find(item => item.id === paymentId);
   assert.equal(payment.type, 'payment');
@@ -325,7 +325,7 @@ test('overpayment and invalid payment amounts fail without changing the journal'
   const expenseId = await addDinner(f);
   const before = await f.store.loadLedger(f.ledgerId);
   for (const amountCents of [5001, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-    await deny(() => f.store.recordPayment(f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents, date: DATE }));
+    await deny(() => reviewedPayment(f.store, f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents, date: DATE }));
   }
   const after = await f.store.loadLedger(f.ledgerId);
   assert.deepEqual(after.expenses, before.expenses);
@@ -335,7 +335,7 @@ test('overpayment and invalid payment amounts fail without changing the journal'
 test('payment reversal appends a trace, preserves the original, and cannot be repeated', async () => {
   const f = await fixture();
   const expenseId = await addDinner(f);
-  const paymentId = await f.store.recordPayment(f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE });
+  const paymentId = await reviewedPayment(f.store, f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE });
   await f.store.reversePayment(f.ledgerId, paymentId);
   const snapshot = await f.store.loadLedger(f.ledgerId);
   const original = snapshot.payments.find(item => item.id === paymentId);
@@ -352,7 +352,7 @@ test('payment reversal appends a trace, preserves the original, and cannot be re
 test('expense reversal requires payment reversal first and preserves both original records', async () => {
   const f = await fixture();
   const expenseId = await addDinner(f);
-  const paymentId = await f.store.recordPayment(f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE });
+  const paymentId = await reviewedPayment(f.store, f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 1200, date: DATE });
   await deny(() => f.store.reverseExpense(f.ledgerId, expenseId));
   const beforeReversal = await f.store.loadLedger(f.ledgerId);
   assert.equal(beforeReversal.expenses.find(item => item.id === expenseId).status, 'active');
@@ -365,7 +365,7 @@ test('expense reversal requires payment reversal first and preserves both origin
   assert.ok(snapshot.payments.find(item => item.id === paymentId).reversedBy);
   assert.ok(snapshot.payments.some(item => item.reversesId === paymentId));
   assert.ok(memberBalances(snapshot).every(member => member.balanceCents === 0));
-  await deny(() => f.store.recordPayment(f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 100, date: DATE }));
+  await deny(() => reviewedPayment(f.store, f.ledgerId, { expenseId, fromMemberId: f.aliceId, amountCents: 100, date: DATE }));
   await deny(() => f.store.reverseExpense(f.ledgerId, expenseId));
 });
 
@@ -424,9 +424,9 @@ test('approved member can manage own payments but cannot impersonate a payer or 
   const temporary=await memberStore.addMember(f.ledgerId, '同行伙伴');
   assert.equal((await memberStore.loadLedger(f.ledgerId)).members.find(row=>row.id===temporary).uid,null);
   await deny(() => memberStore.createInvite(f.ledgerId, f.ownerId));
-  await deny(() => memberStore.recordPayment(f.ledgerId, { expenseId: ownerExpense, fromMemberId: f.aliceId, amountCents: 100, date: DATE }));
+  await deny(() => reviewedPayment(memberStore, f.ledgerId, { expenseId: ownerExpense, fromMemberId: f.aliceId, amountCents: 100, date: DATE }));
   await deny(() => memberStore.reverseExpense(f.ledgerId, ownerExpense));
-  const paymentId = await memberStore.recordPayment(f.ledgerId, { expenseId: ownExpense, fromMemberId: f.ownerId, amountCents: 500, date: DATE });
+  const paymentId = await reviewedPayment(memberStore, f.ledgerId, { expenseId: ownExpense, fromMemberId: f.ownerId, amountCents: 500, date: DATE });
   await memberStore.reversePayment(f.ledgerId, paymentId);
   await memberStore.reverseExpense(f.ledgerId, ownExpense);
   assert.equal((await f.store.loadLedger(f.ledgerId)).expenses.find(item => item.id === ownExpense).status, 'reversed');
@@ -463,3 +463,8 @@ test('a ledger may contain more than fifty members but a single expense has at m
   const expenseId = await addDinner(f, { shares: Object.fromEntries(memberIds.slice(1).map(id => [id, 100])) });
   assert.equal((await f.store.loadLedger(f.ledgerId)).expenses.find(row => row.id === expenseId).payerMemberId, f.ownerId);
 });
+
+async function reviewedPayment(store,id,payload){
+ const e=(await store.loadLedger(id)).expenses.find(e=>e.id===payload.expenseId);
+ return store.recordPayment(id,{toMemberId:e?.payerMemberId,expectedVersion:e?.version||1,expectedRemaining:e?remainingFor(e,payload.fromMemberId):0,...payload});
+}

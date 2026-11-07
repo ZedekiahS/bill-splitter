@@ -111,9 +111,9 @@ test('concurrent writes and retries preserve one idempotent expense',async()=>{
   assert.equal((await request('POST',`/api/ledgers/${f.ledger}/commands`,{type:'addMember',args:['different']},alice,key)).statusCode,409);
 });
 test('concurrent overpayments serialize and reversal is append-only',async()=>{
-  const f=await fixture();await join(f);const expense=await command(f.ledger,'addExpense',[payload(f)],alice),body={type:'recordPayment',args:[{expenseId:expense,fromMemberId:f.member,amountCents:4000,date:'2026-10-29'}]};
+  const f=await fixture();await join(f);const expense=await command(f.ledger,'addExpense',[payload(f)],alice),body={type:'recordPayment',args:[{expenseId:expense,fromMemberId:f.member,toMemberId:'owner',expectedVersion:1,expectedRemaining:5000,amountCents:4000,date:'2026-10-29'}]};
   const responses=await Promise.all([request('POST',`/api/ledgers/${f.ledger}/commands`,body,alice),request('POST',`/api/ledgers/${f.ledger}/commands`,body,alice)]);
-  assert.deepEqual(responses.map(r=>r.statusCode).sort(),[200,400]);
+  assert.deepEqual(responses.map(r=>r.statusCode).sort(),[200,409]);
   let s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,bob);assert.equal(s.expenses[0].repaid[f.member],4000);assert.equal(s.payments.length,1);
   assert.equal((await request('POST',`/api/ledgers/${f.ledger}/commands`,{type:'reversePayment',args:[s.payments[0].id]},bob)).statusCode,403);
   await command(f.ledger,'reversePayment',[s.payments[0].id],alice);s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,bob);

@@ -86,3 +86,50 @@ test('sync updates read-only dialog data without rebuilding an editable form',as
   assert.equal(f.context.historyRows[0].open,true,'keep the previously expanded history');
   assert.equal(f.context.historyRows[1].open,false,'new history stays collapsed');
 });
+
+
+test('quick outstanding and status selection share one status condition',async()=>{
+ const f=fixture('accepted');
+ vm.runInContext(`state.filter='all';state.expenseFilters.status='all';updateExpenseResults=()=>{};
+   state.snapshot={ledger:{id:'shared'},members:[],expenses:[]};
+   sortedExpenses=()=>[{id:'paid',status:'active',payerMemberId:'bob',shares:{alice:100},repaid:{alice:100}}];
+   filterExpenses=(rows,filters)=>rows.filter(e=>filters.status==='settled');
+   `,f.context);
+ await f.handlers.click({target:{closest:()=>({dataset:{filter:'open'}})}});
+ vm.runInContext(`state.expenseFilters.status='settled';`,f.context);
+ assert.equal(vm.runInContext('filteredExpenses().length',f.context),1);
+});
+
+
+test('changed receipt direction requires acknowledgement and preserves typed payment fields',async()=>{
+ const f=fixture('accepted');
+ vm.runInContext(`state.snapshot={ledger:{id:'shared',currency:'CNY'},members:[{id:'old',name:'Old payer'},{id:'new',name:'New payer'},{id:'debtor',name:'Debtor'}],expenses:[{id:'bill',title:'Dinner',version:1,status:'active',payerMemberId:'old',shares:{debtor:10000},repaid:{debtor:0}}]};
+ state.store.loadLedger=async()=>({...state.snapshot,expenses:[{...state.snapshot.expenses[0],version:2,payerMemberId:'new'}]});
+ state.store.recordPayment=async(_id,payload)=>{calls.push(['payment',payload]);if(payload.toMemberId==='old')throw Object.assign(Error('Changed'),{status:409});};
+ openDialog=()=>{};errorSlot=()=>'';finishSave=async()=>{};
+ submitForm=(event,cb)=>cb(new Map([['amount','50'],['date','2026-11-01'],['note','Keep this note']]));
+ paymentDialog('bill','debtor');`,f.context);
+ const submit=()=>f.nodes.get('#payment-form').handlers.submit({});
+ await assert.rejects(submit(),/Changed/);
+ assert.equal(f.nodes.get('#payment-direction').textContent,'Debtor → New payer');
+ assert.equal(f.nodes.get('#payment-review-label').hidden,false);
+ await assert.rejects(submit(),/收款信息已改变/);
+ assert.equal(f.calls.filter(c=>c[0]==='payment').length,1);
+ f.nodes.get('#payment-review').checked=true;await submit();
+ const payload=f.calls.filter(c=>c[0]==='payment').at(-1)[1];
+ assert.equal(payload.toMemberId,'new');assert.equal(payload.expectedVersion,2);assert.equal(payload.amountCents,5000);assert.equal(payload.date,'2026-11-01');assert.equal(payload.note,'Keep this note');
+});
+
+
+test('mobile filter collapse preserves conditions and describes hidden member/date constraints',async()=>{
+ const f=fixture('accepted');
+ vm.runInContext(`state.snapshot={members:[{id:'ann',name:'Ann'}]};state.expenseFilters={memberId:'ann',memberRole:'participant',from:'2026-11-03',to:'2026-11-04',status:'open'};`,f.context);
+ const before=vm.runInContext('JSON.stringify(state.expenseFilters)',f.context);
+ const panel=f.context.document.querySelector('#advanced-expense-filters');panel.hidden=false;
+ const toggle={dataset:{action:'toggle-expense-filters'},setAttribute(){}};
+ await f.handlers.click({target:{closest:()=>toggle}});
+ assert.equal(panel.hidden,true);assert.equal(vm.runInContext('JSON.stringify(state.expenseFilters)',f.context),before);
+ const summary=vm.runInContext('expenseFilterSummary()',f.context);
+ assert.match(summary,/Ann.*参与人.*2026-11-03.*2026-11-04/);
+ await f.handlers.click({target:{closest:()=>toggle}});assert.equal(panel.hidden,false);
+});

@@ -4,12 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { authService,HttpError } from './auth.mjs';
 import { ledgerService } from './ledgers.mjs';
 import { exportStream } from './ledger-export.mjs';
+import {importUploads} from './import-uploads.mjs';
 
 export async function buildApp({pool,origins,production=false,registration=true,trustProxy=false,logger=false}){
   const allowed=new Set(origins);
   if(!allowed.size||production&&[...allowed].some(origin=>!origin.startsWith('https://')))throw new Error('Production requires explicit HTTPS PUBLIC_ORIGINS.');
-  const app=Fastify({logger,trustProxy,bodyLimit:10*1024*1024,requestTimeout:30000});
+  const app=Fastify({logger,trustProxy,bodyLimit:10*1024*1024,requestTimeout:300000});
   const auth=authService(pool,{secure:production,registration}),ledgers=ledgerService(pool);
+  const uploads=importUploads();
+  app.addContentTypeParser('application/octet-stream',(_request,stream,done)=>done(null,stream));
+  app.addHook('onClose',()=>uploads.close());
   app.setErrorHandler((error,request,reply)=>{
     let status=error.statusCode||500,message='服务暂时不可用，请稍后重试。';
     if(error instanceof HttpError)message=error.message;
@@ -29,7 +33,8 @@ export async function buildApp({pool,origins,production=false,registration=true,
       reply.header('Cache-Control','no-store').header('Vary','Cookie');
       if(!['GET','HEAD'].includes(request.method)){
         if(!allowed.has(request.headers.origin)||request.headers['x-bill-splitter']!=='1')throw new HttpError(403,'请求来源无效，请重新打开应用。');
-        if(!request.headers['content-type']?.startsWith('application/json'))throw new HttpError(415,'请求内容无效，请刷新后重试。');
+        const uploading=pathname==='/api/ledger-import/upload';
+        if(!request.headers['content-type']?.startsWith(uploading?'application/octet-stream':'application/json'))throw new HttpError(415,'请求内容无效，请刷新后重试。');
       }
       if(!pathname.startsWith('/api/auth/')&&pathname!=='/api/health'){
         request.user=await auth.current(request);if(!request.user)throw new HttpError(401,'登录已过期，请重新登录。');
@@ -51,6 +56,19 @@ export async function buildApp({pool,origins,production=false,registration=true,
   app.post('/api/ledgers',request=>result(ledgers.create(request.user,request.body,request.headers['idempotency-key'])));
   app.post('/api/ledger-import/preview',{bodyLimit:29*1024*1024},request=>ledgers.previewImport(request.user,request.body));
   app.post('/api/ledger-import',{bodyLimit:29*1024*1024},request=>result(ledgers.import(request.user,request.body,request.headers['idempotency-key'])));
+  app.post('/api/ledger-import/upload',async request=>{
+    const {token,archive}=await uploads.receive(request.user,request.body,request.query.format);
+    try{return {...await ledgers.previewArchive(request.user,archive),token};}
+    catch(error){await uploads.remove(token);throw error;}
+  });
+  app.post('/api/ledger-import/commit',async request=>{
+    const payload=request.body;if(!payload||typeof payload.token!=='string')throw new HttpError(400,'请选择备份文件。');
+    let acquired=false,committed=false;
+    try{
+      const id=await ledgers.importUploaded(request.user,payload,request.headers['idempotency-key'],()=>{const archive=uploads.acquire(request.user,payload.token);acquired=true;return archive;});
+      committed=true;return {result:id};
+    }finally{if(acquired){if(committed)await uploads.remove(payload.token);else uploads.release(payload.token);}}
+  });
   app.get('/api/ledgers/:id/export',async(request,reply)=>{
     const snapshot=await ledgers.get(request.user,request.params.id);
     const archive=exportStream(snapshot,id=>ledgers.receipt(request.user,request.params.id,id));

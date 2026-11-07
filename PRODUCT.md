@@ -60,4 +60,12 @@ The user permits a new palette suitable for the use case. Future background cust
 - Expense lookup combines title/note search, member/role, inclusive dates and status. Member detail exposes paid/shared/received/repaid and gross outstanding amounts.
 - A real repayment can allocate to multiple expenses in oldest-date order. The receiver/owner confirms the displayed allocation; concurrent changes require fresh review. Reversal applies to the whole transfer. Opposite-direction debts are never silently netted.
 - Overview shows actionable local drafts, due periods and pending invitation claims only when present. Reissuing an invite revokes earlier links; declined/revoked/expired outcomes have recovery paths.
-- Joint payers, optional delegated payment entry, categories/trip summaries, bulk name paste and OCR remain separately scoped enhancements rather than defects in the accepted three-stage repair plan.
+- Joint payers, optional delegated payment entry, categories/trip summaries and OCR remain separately scoped enhancements rather than defects in the accepted three-stage repair plan.
+
+- Single-expense receipt confirmation checks the displayed recipient, expense version and outstanding amount. A changed direction or balance requires explicit review while preserving amount, date and note.
+- Quick outstanding and detailed status filters use one status value. New template drafts are isolated by their source expense, separate from an empty new template.
+- Full-backup restore streams private attachments through temporary files and shows dates, monetary totals and member balances before creating an independent ledger. Export/import share the metadata capacity rule; deployment resource limits remain explicit.
+
+- Batch name entry reviews reusable/new identities before one atomic command. Unique active names default to reuse; ambiguous names require a choice; intentional duplicate identities are explicit. New members never gain account access. A stale name review is rejected before any new members are written.
+- Named participant groups belong to a ledger and are available across accounts/devices. Any ledger member may create a group; its creator or the ledger owner may update/delete it. Version checks prevent overwrites. Groups do not store amounts, payers or percentages, and applying one preserves existing custom numeric inputs. In item mode, a group is added only to explicitly selected items.
+- Groups are included in complete JSON/ZIP exports and restored with remapped member IDs. Inactive members remain visible but unselected when applying a group. Removing an unused member removes its group references and invalidates older group versions; financial records are unchanged.

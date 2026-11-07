@@ -83,3 +83,24 @@ node --env-file=.env.test scripts/lan-preview.mjs
 账本归档由创建者操作，服务端事务锁内阻止后续写入，不清除欠款。成员仍能读取、下载附件和导出。恢复后未确认周期继续出现，包括归档期间到期的期次。本次使用现有账本 JSONB 字段保存归档状态和记录，无额外表迁移。
 
 导入接口会创建隔离的新账本，不恢复其他人的账号访问。ZIP/JSON 的限制及验证见导出规范。恢复码不能替代邮箱验证；未提前保存且忘记密码的账号不能通过自助猜测身份找回。上线前仍需实际配置和验证邮件投递及账号归属验证。
+
+
+## Backup uploads (November 7)
+
+The current app sends ZIP/JSON directly as `application/octet-stream` to
+`/api/ledger-import/upload`, then commits an account-bound preview token. Do not
+configure a proxy-wide 20 MiB body limit for this route. Allow streaming request
+bodies and up to five minutes for an upload; provision temporary disk for the
+uploaded ZIP plus its extracted receipts. Authentication, Origin and custom-header
+checks run before reading the stream. Other mutation routes still require JSON.
+
+Metadata is limited to 64 MiB consistently at export/import; receipts remain
+2 MiB each. Imports enforce a free-disk reserve and bounded concurrent staging.
+Temporary files use OS temporary directories and server-generated paths; restrict
+that directory to the service account. Normal completion/expiry/shutdown cleans
+staged files. After a process crash, an operator can remove stale directories
+whose names begin `bill-splitter-import-` after confirming no live importer owns
+them. Upload tokens are memory-local: with multiple instances, route upload and
+commit to the same instance; restarting it requires reselecting the file. A lost
+successful commit response is recoverable using the same idempotency key even
+when its staged files have been removed.

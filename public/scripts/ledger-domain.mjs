@@ -2,6 +2,7 @@ import { assertCents, remainingFor, splitShares, validateDate, consumptionShares
 import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
 import { expenseVersion, legacyHistory, ensureHistory, appendHistory } from './expense-history.mjs';
 import {randomId as newId} from './random-id.mjs';
+import {prepareMemberBatch,groupData,nameKey} from './participant-groups.mjs';
 import {repaymentPlan} from './settlement-plans.mjs';
 import {calendarDate,timeZone} from './ledger-time.mjs';
 
@@ -119,7 +120,7 @@ export function createStateStore({read,mutate,user}) {
       async loadLedger(id) {
         const state = read(), ledger = state.ledgers[id], user = me(); readable(ledger, user);
         const invites = ledger.ownerUid === user.uid ? rows(state.invites).filter(invite => invite.ledgerId === id) : [];
-        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]).map(expense=>({...expense,version:expense.version||1,history:expense.history||legacyHistory(expense.id,expense,state.payments[id],state.members[id])})), payments: rows(state.payments[id]), templates: rows(state.templates[id]), occurrences: rows(state.occurrences[id]), invites,
+        return { ledger: withId(id, ledger), members: rows(state.members[id]), expenses: rows(state.expenses[id]).map(expense=>({...expense,version:expense.version||1,history:expense.history||legacyHistory(expense.id,expense,state.payments[id],state.members[id])})), payments: rows(state.payments[id]), participantGroups:rows(state.participantGroups?.[id]), templates: rows(state.templates[id]), occurrences: rows(state.occurrences[id]), invites,
           claims: invites.flatMap(invite => rows(state.claims[invite.id]).map(claim => ({ ...claim, inviteToken: invite.id }))) };
       },
       async createLedger(payload) { return mutate((state, user, createdAt) => {
@@ -141,6 +142,33 @@ export function createStateStore({read,mutate,user}) {
         writable(state.ledgers[id], user); const memberId = newId();
         state.members[id][memberId] = { name: text(name, "成员名字",40), uid: null, createdAt, createdByUid:user.uid, claimInviteId: null }; return memberId;
       }); },
+      async addMembers(id,entries){return mutate((state,user,at)=>{
+        writable(state.ledgers[id],user);
+        const prepared=prepareMemberBatch(entries,state.members[id]);
+        return prepared.map(row=>{const memberId=row.memberId||newId();
+          if(!row.memberId)state.members[id][memberId]={name:row.name,uid:null,createdAt:at,createdByUid:user.uid,claimInviteId:null};
+          return withId(memberId,state.members[id][memberId]);
+        });
+      });},
+      async saveParticipantGroup(id,payload,groupId){return mutate((state,user,at)=>{
+        const ledger=state.ledgers[id];writable(ledger,user);
+        const groups=state.participantGroups?.[id]||{},prior=groupId&&Object.hasOwn(groups,groupId)?groups[groupId]:null;
+        if(groupId){
+          if(!prior||ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
+          if(payload.expectedVersion!==prior.version)throw Object.assign(new Error('组合已更新，请重新打开后修改。'),{statusCode:409});
+        }
+        const next=groupData(payload,state.members[id]);
+        if(Object.entries(groups).some(([key,g])=>key!==groupId&&nameKey(g.name)===nameKey(next.name)))throw new Error('已有同名组合，请换一个名称。');
+        const key=groupId||newId();state.participantGroups||={};state.participantGroups[id]||={};
+        state.participantGroups[id][key]={...next,createdByUid:prior?.createdByUid||user.uid,createdAt:prior?.createdAt||at,updatedAt:at,version:(prior?.version||0)+1};
+        return withId(key,state.participantGroups[id][key]);
+      });},
+      async deleteParticipantGroup(id,groupId,expectedVersion){return mutate((state,user)=>{
+        const ledger=state.ledgers[id];writable(ledger,user);const groups=state.participantGroups?.[id]||{},prior=Object.hasOwn(groups,groupId)?groups[groupId]:null;
+        if(!prior||ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
+        if(expectedVersion!==prior.version)throw Object.assign(new Error('组合已更新，请重新打开后修改。'),{statusCode:409});
+        delete state.participantGroups[id][groupId];
+      });},
       async setLedgerTimeZone(id,zone){return mutate((state,user,at)=>{
         const ledger=state.ledgers[id];owner(ledger,user);const next=timeZone(zone);
         if((ledger.timeZone||'Asia/Shanghai')===next)return;
@@ -170,6 +198,7 @@ export function createStateStore({read,mutate,user}) {
         const uses=expense=>expense.payerMemberId===memberId||Object.hasOwn(expense.shares||{},memberId)||expense.items?.some(row=>row.memberIds.includes(memberId));
         const used=Object.values(state.expenses[id]||{}).some(e=>uses(e)||e.history?.some(event=>[event.before,event.after].some(version=>version&&uses(version))))||Object.values(state.templates[id]||{}).some(uses)||Object.values(state.payments[id]||{}).some(p=>p.fromMemberId===memberId||p.toMemberId===memberId)||Object.values(state.invites).some(invite=>invite.ledgerId===id&&invite.memberId===memberId);
         if(used)throw new Error('这位成员已有账目、模板或邀请，不能移除。');
+        for(const group of Object.values(state.participantGroups?.[id]||{})){if(group.memberIds.includes(memberId)){group.memberIds=group.memberIds.filter(key=>key!==memberId);group.version++;}}
         delete state.members[id][memberId];
       });},
       async addExpense(id, payload) { return mutate((state, user, createdAt) => {
@@ -270,6 +299,7 @@ export function createStateStore({read,mutate,user}) {
       async recordPayment(id, payload) { return mutate((state, user, createdAt) => {
         const expense = state.expenses[id]?.[payload.expenseId]; if (!expense) throw new Error("费用不存在。");
         receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
+        if(payload.toMemberId!==expense.payerMemberId||payload.expectedVersion!==(expense.version||1)||payload.expectedRemaining!==remainingFor(expense,payload.fromMemberId))throw Object.assign(new Error('收款信息已改变，请核对收款人和待收金额后重新确认。'),{statusCode:409});
         const data = paymentData(payload.expenseId, expense, payload, user.uid, createdAt), paymentId = newId();
         ensureHistory(state,id,payload.expenseId);
         expense.repaid[data.fromMemberId] += data.amountCents; expense.lastPaymentId = paymentId;

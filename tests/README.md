@@ -12,7 +12,7 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 50 tests use real PostgreSQL transactions through Fastify request injection
+The 52 tests use real PostgreSQL transactions through Fastify request injection
 and a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
@@ -38,9 +38,10 @@ node tests/auto-sync.test.mjs
 node tests/expense-drafts.test.mjs
 node tests/ledger-export.test.mjs
 node tests/settlement-plans.test.mjs
+node tests/reliability.test.mjs
 ```
 
-All 195 local tests pass across twelve suites. The API-client suite uses
+All 202 local tests pass across thirteen suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -52,12 +53,13 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
 | `expense-features.test.mjs` | 24 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
 | `expense-features-store.test.mjs` | 14 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly and shared ledger timezone |
-| `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
+| `invitation-navigation.test.mjs` | 9 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
 | `api-client.test.mjs` | 7 | Offline/503/lost-response retry keys, rejected inputs, expired login, concurrent duplicates and LAN HTTP IDs |
 | `auto-sync.test.mjs` | 5 | Single-flight scheduling, hidden pages, network backoff/recovery, expired session and page lifecycle |
 | `expense-drafts.test.mjs` | 15 | Incomplete inputs and attachment recovery, editor scope isolation, competing tabs, queued writes, quota errors, persistent retry keys, correction conflicts and percentage completion |
 | `ledger-export.test.mjs` | 3 | Stable format and cents, private-field exclusion, CSV quoting/formulas, historical attachments and independently decoded ZIP |
 | `settlement-plans.test.mjs` | 2 | Oldest-first payment allocation without mutual debt netting, grouped transfers and combined expense filters |
+| `reliability.test.mjs` | 5 | Stale payment rejection, source-specific template draft keys, large backups, upload ownership/cleanup/expiry and invalid attachments |
 
 The four added HTTP scenarios cover archive permissions and all blocked write
 commands, archive/write races and recurring restoration, authenticated ZIP export
@@ -188,8 +190,22 @@ image bytes, picker size/type rejection and filename/URL safety. See
 
 ## November 6 completion
 
-Run `node tests/settlement-plans.test.mjs` (also included in `npm test`). Current
+Run `node tests/settlement-plans.test.mjs` and `node tests/reliability.test.mjs` (also included in `npm test`). Current
 API coverage includes batch allocation/version checks/idempotency/reversal,
 member deactivation and template guards, invitation rejection/revocation,
 calendar time zones, private backup round trips, and one-time recovery codes.
 The complete checklist is in `docs/review/flow-completion-2026-11-06.md`.
+
+November 7 adds an HTTP round trip of 24 × 2 MiB receipts (including history), sent as a chunked binary stream. Restoration checks every file, all balances, idempotency, original-ledger isolation and unauthorized access. Single-payment conflicts test recipient, version and outstanding balance independently.
+
+November 7 entry follow-up adds `tests/entry-context.test.mjs` for continuation context,
+unique/ambiguous member matching, explicit item membership and automatic percentages.
+Navigation coverage also checks that collapsing filters preserves member/date conditions.
+Browser scenarios and limitations: `docs/review/entry-flow-2026-11-07.md`.
+
+
+The participant-group follow-up adds six local scenarios in `participant-groups.test.mjs`
+and two authenticated API scenarios: atomic mixed-name batches, stale name reviews,
+idempotent retries, shared group permissions/version conflicts, inactive/removed members,
+and backup restoration. Use the isolated regression schema for API runs while phone
+preview is running. See `docs/review/participant-groups-2026-11-07.md`.

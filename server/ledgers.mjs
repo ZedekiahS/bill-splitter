@@ -1,3 +1,5 @@
+import {readFile} from 'node:fs/promises';
+import {memberBalances,remainingFor} from '../public/scripts/ledger-core.mjs';
 import { randomUUID } from 'node:crypto';
 import { createStateStore } from '../public/scripts/ledger-domain.mjs';
 import { receiptBlob } from '../public/scripts/receipt-files.mjs';
@@ -7,7 +9,7 @@ import {readImport,restoreState} from './ledger-import.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){
@@ -22,9 +24,9 @@ export function ledgerService(pool){
     for(const expense of Object.values(state.expenses[ledgerId]||{})){
       const versions=[expense,...(expense.history||[]).flatMap(event=>[event.before,event.after].filter(Boolean))];
       for(const version of versions)for(let index=0;index<(version.receipts||[]).length;index++){
-        const file=version.receipts[index];if(!file.dataUrl)continue;
+        const file=version.receipts[index];if(!file.dataUrl&&!file.importPath)continue;
         if(file.id&&savedFiles.has(file.id)){version.receipts[index]=savedFiles.get(file.id);continue;}
-        const bytes=Buffer.from(await receiptBlob(file).arrayBuffer()),receiptId=file.id||randomUUID();
+        const bytes=file.importPath?await readFile(file.importPath):Buffer.from(await receiptBlob(file).arrayBuffer()),receiptId=file.id||randomUUID();
         await client.query('INSERT INTO bs_receipts(id,ledger_id,expense_id,name,mime,bytes) VALUES($1,$2,$3,$4,$5,$6)',[receiptId,ledgerId,expense.id||Object.keys(state.expenses[ledgerId]).find(key=>state.expenses[ledgerId][key]===expense),file.name,file.type,bytes]);
         const stored={id:receiptId,name:file.name,type:file.type,size:bytes.length,url:`/api/ledgers/${ledgerId}/receipts/${receiptId}`};
         version.receipts[index]=stored;savedFiles.set(receiptId,stored);
@@ -47,11 +49,22 @@ export function ledgerService(pool){
   async function write(user,key,route,body,action){return transaction(pool,client=>once(client,user,key,hash(JSON.stringify([route,body])),()=>action(client)));}
   async function inviteLedger(client,token){id(token);const {rows}=await client.query('SELECT ledger_id FROM bs_invites WHERE id=$1',[token]);if(!rows.length)throw new HttpError(404,'邀请已失效、过期或被认领。');return rows[0].ledger_id;}
   return {
-    async previewImport(user,payload){
-      const archive=await readImport(payload),first=archive.data.members?.[0]?.id;
-      const {attachmentCount}=restoreState(archive,user,{memberId:first});
-      return {title:archive.data.ledger.title,currency:archive.data.ledger.currency,members:archive.data.members.map(m=>({id:m.id,name:m.name})),expenseCount:archive.data.expenses.length,attachmentCount};
+    async previewArchive(user,archive){
+      const {id,state,attachmentCount}=restoreState(archive,user,{memberId:archive.data.members?.[0]?.id});
+      const snapshot=await engine(state,user).loadLedger(id),active=snapshot.expenses.filter(e=>e.status==='active');
+      const dates=snapshot.expenses.map(e=>e.date).sort(),balances=memberBalances(snapshot);
+      return {title:archive.data.ledger.title,currency:archive.data.ledger.currency,members:archive.data.members.map((m,index)=>{
+        const current=snapshot.members[index],receivable=active.filter(e=>e.payerMemberId===current.id).reduce((n,e)=>n+Object.keys(e.shares).reduce((sum,key)=>sum+remainingFor(e,key),0),0);
+        const payable=active.reduce((sum,e)=>sum+remainingFor(e,current.id),0);
+        return {id:m.id,name:m.name,receivableCents:receivable,payableCents:payable,balanceCents:balances.find(b=>b.memberId===current.id).balanceCents};
+      }),expenseCount:snapshot.expenses.length,attachmentCount,from:dates[0]||null,to:dates.at(-1)||null,totalCents:active.reduce((n,e)=>n+e.amountCents,0),outstandingCents:active.reduce((n,e)=>n+Object.keys(e.shares).reduce((sum,key)=>sum+remainingFor(e,key),0),0)};
     },
+    async previewImport(user,payload){return this.previewArchive(user,await readImport(payload));},
+    async importUploaded(user,payload,key,acquire){return write(user,key,'uploaded-import',payload,async client=>{
+      const archive=acquire(),{id:ledgerId,state}=restoreState(archive,user,payload);
+      await client.query('INSERT INTO bs_ledgers(id,owner_id,body) VALUES($1,$2,$3)',[ledgerId,user.uid,state]);
+      await save(client,ledgerId,state);return ledgerId;
+    });},
     async import(user,payload,key){return write(user,key,'import',payload,async client=>{
       const archive=await readImport(payload),{id:ledgerId,state}=restoreState(archive,user,payload);
       await client.query('INSERT INTO bs_ledgers(id,owner_id,body) VALUES($1,$2,$3)',[ledgerId,user.uid,state]);

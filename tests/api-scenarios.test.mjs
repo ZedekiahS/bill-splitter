@@ -1,3 +1,4 @@
+import {Readable} from 'node:stream';
 import assert from 'node:assert/strict';
 import {before,after,test} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -23,14 +24,17 @@ async function request(user,method,path,body,key=randomUUID()){
 async function good(user,method,path,body,key){const r=await request(user,method,path,body,key);assert.equal(r.status,200,JSON.stringify(r.data));return r.result;}
 async function register(name){const email=`scenario-${randomUUID()}@example.test`,r=await request(null,'POST','/api/auth/register',{displayName:name,email,password});assert.equal(r.status,200,JSON.stringify(r.data));return {...r.data.user,cookie:r.headers.get('set-cookie').split(';')[0]};}
 async function login(user,previous){const r=await request(previous,'POST','/api/auth/login',{email:user.email,password});assert.equal(r.status,200,JSON.stringify(r.data));return {...user,cookie:r.headers.get('set-cookie').split(';')[0]};}
-const command=(user,ledger,type,args,key)=>good(user,'POST',`/api/ledgers/${ledger}/commands`,{type,args},key);
+const command=async(user,ledger,type,args,key)=>{
+ if(type==='recordPayment'&&args[0].expectedVersion===undefined){const e=(await snapshot(user,ledger)).expenses.find(e=>e.id===args[0].expenseId);args=[{toMemberId:e.payerMemberId,expectedVersion:e.version||1,expectedRemaining:remainingFor(e,args[0].fromMemberId),...args[0]}];}
+ return good(user,'POST',`/api/ledgers/${ledger}/commands`,{type,args},key);
+};
 const snapshot=(user,ledger)=>good(user,'GET',`/api/ledgers/${ledger}`);
 const post=(user,ledger,type,args,key)=>request(user,'POST',`/api/ledgers/${ledger}/commands`,{type,args},key);
 const expense=(payer,shares,amountCents=12000,extra={})=>({title:'共同开销',date:'2026-10-30',amountCents,payerMemberId:payer,shares,...extra});
 async function ledger(owner=alice,currency='CNY'){return good(owner,'POST','/api/ledgers',{title:'三人周末',currency});}
 async function invite(id,owner,user,name=user.displayName){const member=await command(owner,id,'addMember',[name]),token=await command(owner,id,'createInvite',[member]);await good(user,'POST',`/api/invites/${token}/commands`,{type:'claim',displayName:name});await good(owner,'POST',`/api/invites/${token}/commands`,{type:'approve',uid:user.uid});return member;}
 async function trio(){const id=await ledger(),b=await invite(id,alice,bob),c=await invite(id,alice,chen);return {id,b,c};}
-const financial=s=>({ledger:s.ledger,members:s.members,expenses:s.expenses,payments:s.payments,templates:s.templates,occurrences:s.occurrences});
+const financial=s=>({ledger:s.ledger,members:s.members,expenses:s.expenses,payments:s.payments,templates:s.templates,occurrences:s.occurrences,participantGroups:s.participantGroups});
 async function consistent(f){const views=await Promise.all([alice,bob,chen].map(u=>snapshot(u,f.id)));assert.deepEqual(financial(views[0]),financial(views[1]));assert.deepEqual(financial(views[0]),financial(views[2]));assert.equal(memberBalances(views[0]).reduce((n,m)=>n+m.balanceCents,0),0);return views[0];}
 const pdf=()=>{const bytes=Buffer.from('%PDF-1.4\nSynthetic scenario receipt\n%%EOF');return {name:'receipt.pdf',type:'application/pdf',size:bytes.length,dataUrl:`data:application/pdf;base64,${bytes.toString('base64')}`};};
 
@@ -204,9 +208,9 @@ test('simultaneous expense additions from three accounts all survive without los
 
 test('owner and recipient racing to confirm the same full repayment cannot overpay',async()=>{
   const f=await trio(),id=await command(bob,f.id,'addExpense',[expense(f.b,{owner:5000,[f.c]:5000},10000)]);
-  const args=[{expenseId:id,fromMemberId:f.c,amountCents:5000}];
+  const args=[{expenseId:id,fromMemberId:f.c,toMemberId:f.b,expectedVersion:1,expectedRemaining:5000,amountCents:5000}];
   const results=await Promise.all([post(alice,f.id,'recordPayment',args),post(bob,f.id,'recordPayment',args)]);
-  assert.deepEqual(results.map(r=>r.status).sort(),[200,400]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
   let s=await consistent(f);assert.equal(s.payments.length,1);assert.equal(s.expenses[0].repaid[f.c],5000);
   const reversals=await Promise.all([post(alice,f.id,'reversePayment',[s.payments[0].id]),post(bob,f.id,'reversePayment',[s.payments[0].id])]);
   assert.deepEqual(reversals.map(r=>r.status).sort(),[200,400]);s=await consistent(f);assert.equal(s.payments.length,2);assert.equal(s.expenses[0].repaid[f.c],0);
@@ -489,4 +493,84 @@ test('a resumed draft retry after a new login returns the original expense witho
   const id=await command(bob,f.id,'addExpense',args,key),otherSession=await login(bob);
   assert.equal(await command(otherSession,f.id,'addExpense',args,key),id);
   const s=await consistent(f);assert.equal(s.expenses.length,1);assert.equal(s.expenses[0].history.length,1);
+});
+
+
+test('single receipt freezes recipient/version/balance and stale submissions leave all accounts unchanged',async()=>{
+ const f=await trio(),original=expense('owner',{[f.b]:10000},10000),id=await command(alice,f.id,'addExpense',[original]);
+ const reviewed={expenseId:id,fromMemberId:f.b,toMemberId:'owner',expectedVersion:1,expectedRemaining:10000,amountCents:5000,date:'2026-11-07',note:'Received by original payer'};
+ await command(alice,f.id,'updateExpense',[id,{...original,payerMemberId:f.c,expectedVersion:1,changeReason:'Correct payer'}]);
+ const before=await consistent(f);
+ for(const payload of [reviewed,{...reviewed,expectedVersion:2},{...reviewed,toMemberId:f.c},{...reviewed,toMemberId:f.c,expectedVersion:2,expectedRemaining:9000},{expenseId:id,fromMemberId:f.b,amountCents:100}]){
+  assert.equal((await post(alice,f.id,'recordPayment',[payload])).status,409);
+  assert.deepEqual(financial(await consistent(f)),financial(before));
+ }
+ const corrected={...reviewed,toMemberId:f.c,expectedVersion:2},key=randomUUID();
+ const payment=await command(chen,f.id,'recordPayment',[corrected],key);
+ assert.equal(await command(chen,f.id,'recordPayment',[corrected],key),payment);
+ const after=await consistent(f);assert.equal(after.payments[0].toMemberId,f.c);assert.equal(after.expenses[0].repaid[f.b],5000);
+ assert.equal((await post(alice,f.id,'recordPayment',[corrected])).status,409);
+});
+
+test('streamed full backup above former upload and expansion caps restores historical receipts and balances atomically',async()=>{
+ const f=await trio(),bytes=Buffer.alloc(2*1024*1024);bytes.write('%PDF-1.4\n');
+ const receipt={name:'Full-size receipt.pdf',type:'application/pdf',size:bytes.length,dataUrl:`data:application/pdf;base64,${bytes.toString('base64')}`};
+ for(let i=0;i<8;i++)await command(alice,f.id,'addExpense',[expense('owner',{[f.b]:10000},10000,{title:'Backup '+i,receipts:[receipt,receipt,receipt]})]);
+ let saved=await snapshot(alice,f.id),first=saved.expenses[0];
+ await command(alice,f.id,'updateExpense',[first.id,{...first,receipts:first.receipts.slice(1),expectedVersion:1,changeReason:'Keep removed receipt in history'}]);
+ await command(alice,f.id,'recordPayment',[{expenseId:first.id,fromMemberId:f.b,amountCents:1000,date:'2026-11-07'}]);
+ saved=await consistent(f);
+ const exported=await fetch(base+`/api/ledgers/${f.id}/export`,{headers:{cookie:alice.cookie}});assert.equal(exported.status,200);
+ const zip=Buffer.from(await exported.arrayBuffer());assert.ok(zip.length>40*1024*1024);
+ const upload=await fetch(base+'/api/ledger-import/upload?format=zip',{method:'POST',headers:{origin,cookie:bob.cookie,'x-bill-splitter':'1','content-type':'application/octet-stream'},body:Readable.from((function*(){for(let i=0;i<zip.length;i+=65536)yield zip.subarray(i,i+65536);})()),duplex:'half'});
+ const preview=await upload.json();assert.equal(upload.status,200,JSON.stringify(preview));
+ assert.equal(preview.attachmentCount,24);assert.equal(preview.totalCents,80000);assert.equal(preview.outstandingCents,79000);assert.equal(preview.from,'2026-10-30');
+ assert.equal(preview.members.find(m=>m.id===f.b).payableCents,79000);
+ assert.equal((await request(outsider,'POST','/api/ledger-import/commit',{token:preview.token,memberId:f.b})).status,410);
+ const key=randomUUID(),body={token:preview.token,memberId:f.b,title:'Recovered full backup'};
+ const copied=await good(bob,'POST','/api/ledger-import/commit',body,key);
+ assert.equal(await good(bob,'POST','/api/ledger-import/commit',body,key),copied);
+ const restored=await snapshot(bob,copied);assert.equal(restored.expenses.length,8);assert.equal(restored.payments.length,1);
+ assert.equal(JSON.stringify(restored).includes('importPath'),false);
+ const balanceMap=s=>Object.fromEntries(memberBalances(s).map(m=>[m.name,m.balanceCents]));assert.deepEqual(balanceMap(restored),balanceMap(saved));
+ const files=new Map();for(const e of restored.expenses)for(const version of [e,...e.history.flatMap(h=>[h.before,h.after].filter(Boolean))])for(const file of version.receipts||[])files.set(file.id,file);
+ assert.equal(files.size,24);
+ for(const file of files.values()){
+  const r=await fetch(base+file.url,{headers:{cookie:bob.cookie}});assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),bytes);
+ }
+ assert.equal((await request(alice,'GET',`/api/ledgers/${copied}`)).status,403);
+ assert.deepEqual(financial(await consistent(f)),financial(saved));
+ assert.equal((await request(bob,'POST','/api/ledger-import/commit',body)).status,410);
+ const rejected=await fetch(base+'/api/ledger-import/upload?format=zip',{method:'POST',headers:{origin,cookie:bob.cookie,'x-bill-splitter':'1','content-type':'application/octet-stream'},body:Buffer.from('broken zip')});assert.equal(rejected.status,400);
+ assert.equal((await good(bob,'GET','/api/ledgers')).filter(l=>l.title==='Recovered full backup').length,1);
+});
+
+
+test('batch members commit atomically, replay once, and detect concurrent name creation',async()=>{
+ const f=await trio(),entries=[{name:'小林',memberId:f.b},{name:'小宋',create:true,expectedMatches:[]}];
+ const before=await snapshot(alice,f.id);
+ assert.equal((await post(bob,f.id,'addMembers',[[...entries,{name:'Missing',memberId:'foreign'}]])).status,409);
+ assert.deepEqual(await snapshot(alice,f.id),before);
+ assert.equal((await post(outsider,f.id,'addMembers',[entries])).status,403);
+ const key=randomUUID(),added=await command(bob,f.id,'addMembers',[entries],key);
+ assert.deepEqual(await command(bob,f.id,'addMembers',[entries],key),added);assert.equal(added[0].id,f.b);assert.equal(added[1].uid,null);
+ const concurrent=[{name:'小陶',create:true,expectedMatches:[]}];
+ const results=await Promise.all([post(alice,f.id,'addMembers',[concurrent]),post(chen,f.id,'addMembers',[concurrent])]);
+ assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+ const s=await consistent(f);assert.equal(s.members.filter(m=>m.name==='小宋').length,1);assert.equal(s.members.filter(m=>m.name==='小陶').length,1);
+});
+
+test('shared participant groups enforce versions, isolate ledgers, synchronize and survive backups',async()=>{
+ const f=await trio(),g=await command(bob,f.id,'saveParticipantGroup',[{name:'晚餐四人',memberIds:['owner',f.b,f.c]}]);
+ assert.deepEqual((await consistent(f)).participantGroups,[g]);
+ assert.equal((await post(chen,f.id,'saveParticipantGroup',[{name:'Changed',memberIds:[f.c],expectedVersion:1},g.id])).status,403);
+ const another=await ledger();assert.equal((await post(alice,another,'saveParticipantGroup',[{name:'Foreign',memberIds:[f.b]}])).status,400);
+ const changed=await command(alice,f.id,'saveParticipantGroup',[{name:'同行伙伴',memberIds:[f.b,f.c],expectedVersion:1},g.id]);assert.equal(changed.version,2);
+ assert.equal((await post(bob,f.id,'deleteParticipantGroup',[g.id,1])).status,409);
+ const snapshotBefore=await consistent(f),{data}=ledgerExport(snapshotBefore);
+ const copied=await good(bob,'POST','/api/ledger-import',{format:'json',content:JSON.stringify(data),memberId:f.b});
+ const restored=await snapshot(bob,copied);assert.equal(restored.participantGroups[0].name,'同行伙伴');assert.equal(restored.participantGroups[0].memberIds.length,2);
+ assert.ok(restored.participantGroups[0].memberIds.every(id=>restored.members.some(m=>m.id===id)));assert.equal((await request(chen,'GET',`/api/ledgers/${copied}`)).status,403);
+ await command(bob,f.id,'deleteParticipantGroup',[g.id,2]);const after=await consistent(f);assert.deepEqual(after.participantGroups,[]);assert.deepEqual(after.members,snapshotBefore.members);assert.deepEqual(after.expenses,snapshotBefore.expenses);
+ await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal((await post(bob,f.id,'saveParticipantGroup',[{name:'Archived',memberIds:[f.b]}])).status,400);
 });

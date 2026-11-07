@@ -2,7 +2,7 @@ const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
-function detectedType(bytes) {
+export function detectedType(bytes) {
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if ([137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) return 'image/png';
   const ascii = (start, text) => [...text].every((char, index) => bytes[start + index] === char.charCodeAt(0));

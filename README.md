@@ -145,7 +145,7 @@ npm test
 npm run test:api
 ```
 
-All 195 local tests and 50 PostgreSQL API tests pass in the November 6 follow-up.
+All 202 local tests and 52 PostgreSQL API tests pass in the November 7 reliability follow-up.
 They cover money, drafts/conflicts, selection and localization, batch repayments,
 member lifecycle, invitations, time zones, ZIP/JSON restoration and single-use
 account recovery. API suites run sequentially against an isolated disposable
@@ -179,10 +179,40 @@ Draft recovery, export and ledger archiving are covered in
 - Overview links to existing drafts, due recurring bills and pending join requests.
 - ZIP/JSON import validates records and restores a separate ledger. Choose your own
   member identity; other people must be invited again. Missing attachment files block
-  incomplete recovery. Limits: 20 MiB upload, 40 MiB expanded ZIP.
+  incomplete recovery. ZIP files stream to private temporary storage; attachments are
+  processed separately from JSON metadata. Export and import share a 64 MiB metadata
+  limit, while each receipt retains its 2 MiB limit. Import previews show dates,
+  expense totals, outstanding amounts and member balances.
 - New accounts receive a one-time recovery code; existing accounts can generate one
   using the current password in account settings. Password reset consumes the code
   and revokes all sessions. Keep the code outside the app. Email/SMS recovery is not
   configured, and an account without its password or saved code cannot self-recover.
 
 See [the complete follow-up checklist and evidence](docs/review/flow-completion-2026-11-06.md).
+
+The [November 7 reliability review](docs/review/reliability-2026-11-07.md) covers stale single-payment protection, full-backup round trips, unified status filters and source-specific template drafts.
+
+
+### 2026-11-07：连续记账与成员选择
+
+- 保存并继续记保留垫付人、日期、参与人、分摊方式；按比例保留比例及手动/自动状态。金额、用途、备注、附件和旧项目不会带入下一笔。
+- 添加参与人时，回车复用唯一同名成员；多个同名成员须明确选择，也可主动另建同名成员。
+- 逐项分摊新增或选择成员后，可就地选择其消费项目并看到承担金额；未分配时须选择项目或明确暂不分摊。
+- 每人的比例标出手动或自动，可单独恢复自动分配，其他人的手动设置保持不变。
+- 手机默认收起成员、身份、日期筛选；收起后保留生效条件摘要，状态选择始终可见。
+
+验证记录：[连续记账体验复核](docs/review/entry-flow-2026-11-07.md)。
+
+
+### 2026-11-07：批量名单与常用组合
+
+记一笔中新增“批量添加”和“常用组合”：
+
+- 支持换行、逗号、顿号、分号、制表符分隔姓名；保留英文姓名内部空格。先核对复用/新建/同名歧义，也能取消不需要的人，再一次确认。
+- 批量添加失败不留下半份名单；网络重试沿用幂等请求，并发新建同名成员需要重新核对。
+- 将当前参与人命名保存到账本，在其他设备或成员账号上使用。支持替换或追加本笔参与人，以及编辑名称、编辑成员和删除组合。
+- 普通成员只能修改自己创建的组合，管理员可管理账本内组合。组合更新采用版本核对，删除组合保留成员和账单。
+- 逐项分摊先选择消费项目，再将名单或组合加入这些项目。原有项目参与人保留；其他项目不受影响。
+- 未确认名单会阻止直接保存账单，输入随草稿保留。完整备份包含组合并支持恢复；旧备份仍可导入。
+
+验证记录：[批量名单与组合复核](docs/review/participant-groups-2026-11-07.md)。
