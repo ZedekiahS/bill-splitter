@@ -2,7 +2,8 @@
 import {networkInterfaces} from 'node:os';
 import {database} from '../server/database.mjs';
 import {buildApp} from '../server/app.mjs';
-const host=process.env.LAN_HOST,port=2807;
+const host=process.env.LAN_HOST,port=Number(process.env.LAN_PORT||2807);
+if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('LAN_PORT must be an integer between 1024 and 65535.');
 const addresses=Object.values(networkInterfaces()).flat().filter(Boolean);
 if(!addresses.some(row=>row.address===host&&!row.internal&&row.family==='IPv4')||
   !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host||''))throw new Error('Set LAN_HOST to this computer\'s private Wi-Fi/LAN IPv4 address.');

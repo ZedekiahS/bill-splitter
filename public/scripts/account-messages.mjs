@@ -1,4 +1,13 @@
 export default {
+ '已保存，进入账本':'Saved, open my ledger',
+ '设置恢复码':'Set up a recovery code','忘记密码时，可用恢复码找回账号。生成新码会使旧码失效。':'A recovery code lets you reset a forgotten password. Generating a new code invalidates the old one.',
+ '当前密码':'Current password','生成恢复码':'Generate recovery code','保存恢复码':'Save your recovery code',
+ '恢复码只显示这一次。请保存在密码管理器或其他安全位置，不要分享给他人。':'This code is shown only once. Save it in a password manager or another safe place. Do not share it.',
+ '恢复码':'Recovery code','已保存':'Saved','忘记密码？':'Forgot password?','返回登录':'Back to sign in',
+ '输入注册时或账号设置中保存的一次性恢复码。':'Enter the one-time recovery code saved during registration or from your account settings.',
+ '重设密码':'Reset password','使用恢复码验证身份，并设置新密码。':'Verify your identity with a recovery code and choose a new password.',
+ '新密码':'New password','保存新密码':'Save new password','密码已更新，请使用新密码登录。':'Password updated. Sign in with your new password.',
+ '邮箱或恢复码不正确，或恢复码已使用。':'The email or recovery code is incorrect, or the code has already been used.',
   '创建账号，开始你们共同的账本。':'Create an account to start sharing expenses.',
   '未登录':'Not signed in',
   '正在创建账号…':'Creating your account…',

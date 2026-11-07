@@ -3,10 +3,11 @@ import { createStateStore } from '../public/scripts/ledger-domain.mjs';
 import { receiptBlob } from '../public/scripts/receipt-files.mjs';
 import { transaction } from './database.mjs';
 import { HttpError,hash } from './auth.mjs';
+import {readImport,restoreState} from './ledger-import.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['setLedgerStatus','addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){
@@ -46,6 +47,16 @@ export function ledgerService(pool){
   async function write(user,key,route,body,action){return transaction(pool,client=>once(client,user,key,hash(JSON.stringify([route,body])),()=>action(client)));}
   async function inviteLedger(client,token){id(token);const {rows}=await client.query('SELECT ledger_id FROM bs_invites WHERE id=$1',[token]);if(!rows.length)throw new HttpError(404,'邀请已失效、过期或被认领。');return rows[0].ledger_id;}
   return {
+    async previewImport(user,payload){
+      const archive=await readImport(payload),first=archive.data.members?.[0]?.id;
+      const {attachmentCount}=restoreState(archive,user,{memberId:first});
+      return {title:archive.data.ledger.title,currency:archive.data.ledger.currency,members:archive.data.members.map(m=>({id:m.id,name:m.name})),expenseCount:archive.data.expenses.length,attachmentCount};
+    },
+    async import(user,payload,key){return write(user,key,'import',payload,async client=>{
+      const archive=await readImport(payload),{id:ledgerId,state}=restoreState(archive,user,payload);
+      await client.query('INSERT INTO bs_ledgers(id,owner_id,body) VALUES($1,$2,$3)',[ledgerId,user.uid,state]);
+      await save(client,ledgerId,state);return ledgerId;
+    });},
     async updates(user){const {rows}=await pool.query('SELECT l.id,l.revision::text AS revision FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.id',[user.uid]);return rows;},
     async list(user){const {rows}=await pool.query('SELECT l.id,l.body->\'ledgers\'->l.id::text AS ledger FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.updated_at DESC',[user.uid]);return rows.map(row=>({...row.ledger,id:row.id}));},
     async get(user,ledgerId){const state=await load(pool,ledgerId,user);return engine(state,user).loadLedger(ledgerId);},

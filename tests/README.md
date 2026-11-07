@@ -12,8 +12,8 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 42 tests use real PostgreSQL transactions: 13 through Fastify request
-injection and 29 through a loopback HTTP listener with independent session cookies.
+The 50 tests use real PostgreSQL transactions through Fastify request injection
+and a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,
 invitation approval, payer restrictions, concurrent idempotent writes, overpayment
@@ -37,9 +37,10 @@ node tests/api-client.test.mjs
 node tests/auto-sync.test.mjs
 node tests/expense-drafts.test.mjs
 node tests/ledger-export.test.mjs
+node tests/settlement-plans.test.mjs
 ```
 
-All 183 local tests pass across these eleven suites. The API-client suite uses
+All 195 local tests pass across twelve suites. The API-client suite uses
 controlled fetch failures against the shipped client module; it is not a live
 network test. The PostgreSQL suite and browser review provide that separate layer.
 
@@ -50,12 +51,13 @@ network test. The PostgreSQL suite and browser review provide that separate laye
 | `i18n.test.mjs` | 7 | Remembered language, unavailable storage, literal user content, calendar dates, translated errors and statements, message coverage |
 | `expense-search.test.mjs` | 4 | Chinese text composition, native search clearing, and input events |
 | `expense-features.test.mjs` | 24 | Item totals and rounding, receipts, recurrence dates, month ends, leap years, consumed occurrences |
-| `expense-features-store.test.mjs` | 13 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly |
+| `expense-features-store.test.mjs` | 14 | Template lifecycle, due dates, atomic duplicate rejection, metadata persistence, cloud adapter document assembly and shared ledger timezone |
 | `invitation-navigation.test.mjs` | 7 | Actual app refresh/language handlers, stale repayment recovery, revision updates, stale responses, search/save deferral and dialog updates |
 | `api-client.test.mjs` | 7 | Offline/503/lost-response retry keys, rejected inputs, expired login, concurrent duplicates and LAN HTTP IDs |
 | `auto-sync.test.mjs` | 5 | Single-flight scheduling, hidden pages, network backoff/recovery, expired session and page lifecycle |
-| `expense-drafts.test.mjs` | 6 | Incomplete inputs and attachment recovery, scope isolation, competing tabs, queued writes, quota errors and persistent retry keys |
+| `expense-drafts.test.mjs` | 15 | Incomplete inputs and attachment recovery, editor scope isolation, competing tabs, queued writes, quota errors, persistent retry keys, correction conflicts and percentage completion |
 | `ledger-export.test.mjs` | 3 | Stable format and cents, private-field exclusion, CSV quoting/formulas, historical attachments and independently decoded ZIP |
+| `settlement-plans.test.mjs` | 2 | Oldest-first payment allocation without mutual debt netting, grouped transfers and combined expense filters |
 
 The four added HTTP scenarios cover archive permissions and all blocked write
 commands, archive/write races and recurring restoration, authenticated ZIP export
@@ -165,8 +167,7 @@ Start `node scripts/preview.mjs` and open
 `http://127.0.0.1:2801/app.html?demo=1`. Review desktop and narrow mobile layouts,
 expense entry, ledger/member creation, invitation claim/approval, partial receipt
 and reversal, and statement copy/download. Check that an empty expense search
-offers a clear-filter action, and that saving an expense or switching ledgers
-clears previous filters. Demo changes stay in this browser's
+offers a clear-filter action, and that saving an expense preserves its filters while switching ledgers clears them. Demo changes stay in this browser's
 local storage. Use a different preview port for disposable review data so that
 the main demo remains clean. Browser checks complement the suites; they do not
 constitute a live cloud rollout.
@@ -184,3 +185,11 @@ correction, immutable private attachment history, forged receipt references and
 legacy history with unknown actors. The local suite additionally verifies original
 image bytes, picker size/type rejection and filename/URL safety. See
 [the browser review](../docs/review/expense-history-2026-10-31.md).
+
+## November 6 completion
+
+Run `node tests/settlement-plans.test.mjs` (also included in `npm test`). Current
+API coverage includes batch allocation/version checks/idempotency/reversal,
+member deactivation and template guards, invitation rejection/revocation,
+calendar time zones, private backup round trips, and one-time recovery codes.
+The complete checklist is in `docs/review/flow-completion-2026-11-06.md`.

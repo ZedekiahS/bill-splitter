@@ -166,7 +166,7 @@ export default {
   '收据正在处理，请稍候再保存。': 'Wait for the receipts to finish processing before saving.',
   '账单合计超出支持范围。': 'The expense total is too large.',
   '请填写 1–20 个消费项目。': 'Add between 1 and 20 items.',
-  '每个项目请选择 1–8 位参与成员。': 'Choose between 1 and 8 participants for each item.',
+  '每个项目请选择 1–50 位参与成员。': 'Choose between 1 and 50 participants for each item.',
   '项目名称不能为空，且不能超过 120 个字。': 'Each item needs a name of no more than 120 characters.',
   '收据文件名不能为空，且不能超过 120 个字。': 'Each receipt needs a filename of no more than 120 characters.',
   '收据文件无效，请重新选择。': 'This receipt file is invalid. Select it again.',

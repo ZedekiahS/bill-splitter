@@ -453,11 +453,11 @@ test('invalid expense amounts, unknown members and oversplitting are rejected at
   assert.deepEqual((await f.store.loadLedger(f.ledgerId)).expenses, before.expenses);
 });
 
-test('a ledger may contain more than eight members but a single expense has at most eight shares', async () => {
+test('a ledger may contain more than fifty members but a single expense has at most fifty shares', async () => {
   const f = await fixture();
   const memberIds = [f.ownerId, f.aliceId];
-  for (let i = 0; i < 7; i++) memberIds.push(await f.store.addMember(f.ledgerId, `同行人${i + 1}`));
-  assert.equal((await f.store.loadLedger(f.ledgerId)).members.length, 9);
+  for (let i = 0; i < 49; i++) memberIds.push(await f.store.addMember(f.ledgerId, `同行人${i + 1}`));
+  assert.equal((await f.store.loadLedger(f.ledgerId)).members.length, 51);
   await deny(() => addDinner(f, { shares: Object.fromEntries(memberIds.map(id => [id, 100])) }));
   assert.equal((await f.store.loadLedger(f.ledgerId)).expenses.length, 0);
   const expenseId = await addDinner(f, { shares: Object.fromEntries(memberIds.slice(1).map(id => [id, 100])) });

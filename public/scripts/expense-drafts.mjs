@@ -2,7 +2,7 @@ import {randomId} from './random-id.mjs';
 const DB_NAME='bill-splitter-drafts-v1';
 export const draftScope=(mode,uid,ledgerId)=>JSON.stringify([mode,uid,ledgerId]);
 export function draftKey(scope,options={}){
-  const kind=options.expenseId?['expense',options.expenseId]:options.occurrence?['occurrence',options.initial.id,options.occurrence.date]:options.templateMode?['template',options.templateId||'new']:['new'];
+  const kind=options.expenseId?['expense',options.expenseId]:options.occurrence?['occurrence',options.initial.id,options.occurrence.date]:options.templateMode?['template',options.templateId||'new']:options.sourceTemplateId?['from-template',options.sourceTemplateId]:options.entryId?['new',options.entryId]:['new'];
   return JSON.stringify([scope,...kind]);
 }
 export function createDraftStore(factory=globalThis.indexedDB){

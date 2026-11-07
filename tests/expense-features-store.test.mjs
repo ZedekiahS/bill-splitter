@@ -144,3 +144,20 @@ test('saving a percentage template includes the payer remainder so reuse has the
   const f=await fixture(); await f.store.saveTemplate(f.id,{...f.payload,shares:{[f.alice]:3000}});
   const s=await f.store.loadLedger(f.id); assert.deepEqual(s.templates[0].shares,{[f.alice]:3000,owner:7001});
 });
+
+
+test('temporary member correction preserves identity and blocks historical deletion',async()=>{
+  const f=await fixture(),other=await approve(f),id=await other.addMember(f.id,'Typo');
+  await other.renameMember(f.id,id,'Correct','Typo');
+  await assert.rejects(other.renameMember(f.id,id,'Old','Typo'),/已更新/);
+  let s=await f.store.loadLedger(f.id);assert.equal(s.members.find(m=>m.id===id).name,'Correct');assert.equal(s.members.find(m=>m.id===id).uid,null);
+  const expense=await other.addExpense(f.id,{...f.payload,payerMemberId:f.alice,shares:{[f.alice]:5001,[id]:5000}});
+  await f.store.reverseExpense(f.id,expense);
+  await assert.rejects(other.removeMember(f.id,id),/不能移除/);
+  const unused=await other.addMember(f.id,'Accidental');await other.removeMember(f.id,unused);
+  s=await f.store.loadLedger(f.id);assert.equal(s.members.some(m=>m.id===unused),false);
+  await assert.rejects(other.renameMember(f.id,'owner','No','Zed'),/只有/);
+  const owned=await f.store.addMember(f.id,'Owner temporary');
+  await assert.rejects(other.renameMember(f.id,owned,'No','Owner temporary'),/只有/);
+  await f.store.setLedgerStatus(f.id,'archived');await assert.rejects(other.renameMember(f.id,id,'No','Correct'),/已归档/);
+});

@@ -5,6 +5,27 @@ standalone repository preserves the original CSSE280 project and its vendor
 license notices, with a new shared-ledger interface built in HTML, CSS, and
 JavaScript.
 
+## Expense entry improvements
+
+- Add several temporary participants without closing the entry panel; find existing
+  names before creating another. Small ledgers select everyone; ledgers over eight
+  members initially select only the signed-in member. Each expense supports up to 50 participants; the previous group can be selected explicitly.
+- Percentage splits start equal. Editing one of two shares completes the other;
+  with more participants, unedited shares divide the remainder. Manual inputs survive
+  mode switches and draft recovery. Invalid or over-100 totals are not normalized.
+- Preview rows show final consumption, including the payer's unallocated remainder.
+- Ordinary drafts, each source template and successive entries have separate identities.
+  Stale correction drafts show a comparison and merge independent changes; overlapping
+  fields require review. Effective payments keep financial fields locked.
+- Saving keeps the current view, search and filter. Save-and-add-another retains the
+  selected participants and clears expense-specific fields.
+- Temporary members can be renamed by the owner or their original adding member;
+  only unused members without expenses, history references, templates or invitations
+  can be removed. Claimed accounts cannot be edited through this flow.
+- New expense/repayment dates follow the device calendar; recurring periods use the shared ledger time zone. Saved dates do not shift.
+
+Verification details: [entry flow review](docs/review/entry-flow-2026-11-06.md).
+
 ## Run the application
 
 The frontend now uses a self-hosted Node.js API and PostgreSQL. Normal account
@@ -20,7 +41,7 @@ npm start
 
 Open [Bill Splitter](http://127.0.0.1:2801/index.html) and register with a name,
 email and password. Email is currently an unverified login identifier; email
-verification and password recovery are required before unrestricted public
+verification and email recovery delivery are required before unrestricted public
 registration. WeChat, QQ and phone login are deferred. See [deployment and backup
 instructions](docs/self-hosting.md). No public deployment or old account migration
 is performed by updating this repository.
@@ -124,14 +145,11 @@ npm test
 npm run test:api
 ```
 
-All 183 local tests pass: 65 original calculation regressions, 42 shared-ledger
-calculation/storage tests, 7 localization regressions, 4 expense-search
-regressions, 24 recurring/item/attachment checks, 13 feature-storage checks,
-7 shared-session UI regressions, 7 API-client retry/error/LAN checks, and 5 automatic
-synchronization scheduling checks, 6 draft persistence checks and 3 export checks.
-The 42 PostgreSQL API tests exercise real authenticated transactions, permissions,
-concurrency and private files, including 29 scenarios through an actual HTTP
-listener. They reset only their dedicated test database and run sequentially.
+All 195 local tests and 50 PostgreSQL API tests pass in the November 6 follow-up.
+They cover money, drafts/conflicts, selection and localization, batch repayments,
+member lifecycle, invitations, time zones, ZIP/JSON restoration and single-use
+account recovery. API suites run sequentially against an isolated disposable
+schema; never run reset fixtures against the phone-preview data.
 Legacy emulator suites remain for historical regressions. See
 [tests/README.md](tests/README.md) for commands, coverage and limits.
 
@@ -148,3 +166,23 @@ Expense corrections, history and attachment workflows are documented in
 
 Draft recovery, export and ledger archiving are covered in
 [the November 2 review](docs/review/drafts-export-2026-11-02.md).
+
+## Lookup, settlement and recovery
+
+- Search titles and notes; combine member/role, date range and status filters.
+  Member accounts show total shares, advances, repayments and outstanding amounts.
+- Confirm one transfer across multiple bills with an oldest-first allocation preview.
+  Server checks the reviewed versions, prevents overpayment and reverses the whole
+  transfer together. Opposite debts remain separate until explicitly repaid.
+- The owner can deactivate/restore members while preserving previous records and
+  balances. Reissued links revoke old invites; requests can be declined or revoked.
+- Overview links to existing drafts, due recurring bills and pending join requests.
+- ZIP/JSON import validates records and restores a separate ledger. Choose your own
+  member identity; other people must be invited again. Missing attachment files block
+  incomplete recovery. Limits: 20 MiB upload, 40 MiB expanded ZIP.
+- New accounts receive a one-time recovery code; existing accounts can generate one
+  using the current password in account settings. Password reset consumes the code
+  and revokes all sessions. Keep the code outside the app. Email/SMS recovery is not
+  configured, and an account without its password or saved code cannot self-recover.
+
+See [the complete follow-up checklist and evidence](docs/review/flow-completion-2026-11-06.md).

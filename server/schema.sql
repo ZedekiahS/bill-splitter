@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS bs_sessions (
   token_hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES bs_users(id),
   expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE bs_identities ADD COLUMN IF NOT EXISTS recovery_hash text;
 CREATE INDEX IF NOT EXISTS bs_session_expiry ON bs_sessions(expires_at);
 CREATE TABLE IF NOT EXISTS bs_auth_limits (
   key text PRIMARY KEY, count integer NOT NULL, expires_at timestamptz NOT NULL

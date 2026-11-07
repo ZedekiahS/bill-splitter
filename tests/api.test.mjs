@@ -15,7 +15,7 @@ async function request(method,path,body,user,key=randomUUID(),extra={}){
   return app.inject({method,url:path,payload:body,headers:{origin,'x-bill-splitter':'1','content-type':'application/json','idempotency-key':key,...(user?{cookie:user.cookie}:{}),...extra}});
 }
 async function good(method,path,body,user,key){const response=await request(method,path,body,user,key);assert.ok(response.statusCode<300,response.body);const data=response.json();return Object.hasOwn(data,'result')?data.result:data;}
-async function register(name){const response=await request('POST','/api/auth/register',{email:`${name}-${randomUUID()}@example.test`,displayName:name,password:'Strong-local-test-123!'});assert.equal(response.statusCode,200,response.body);return {...response.json().user,cookie:response.headers['set-cookie'].split(';')[0]};}
+async function register(name){const response=await request('POST','/api/auth/register',{email:`${name}-${randomUUID()}@example.test`,displayName:name,password:'Strong-local-test-123!'});assert.equal(response.statusCode,200,response.body);return {...response.json().user,recoveryCode:response.json().recoveryCode,cookie:response.headers['set-cookie'].split(';')[0]};}
 async function fixture(){
   const ledger=await good('POST','/api/ledgers',{title:'Trip',currency:'CNY',ownerUid:outsider.uid},alice);
   const member=await command(ledger,'addMember',['Bob'],alice);
@@ -32,7 +32,8 @@ before(async()=>{
 after(async()=>{if(app)await app.close();await pool.end();});
 
 test('registration stores hashed passwords and opaque HttpOnly sessions',async()=>{
-  const {rows}=await pool.query('SELECT password_hash FROM bs_identities WHERE user_id=$1',[alice.uid]);
+  const {rows}=await pool.query('SELECT password_hash,recovery_hash FROM bs_identities WHERE user_id=$1',[alice.uid]);
+  assert.match(alice.recoveryCode,/^[A-Za-z0-9_-]{32}$/);assert.equal(rows[0].recovery_hash,hash(alice.recoveryCode));
   assert.match(rows[0].password_hash,/^[0-9a-f]{32}:[0-9a-f]{128}$/);assert.doesNotMatch(rows[0].password_hash,/Strong/);
   const me=await good('GET','/api/auth/me',undefined,alice);assert.equal(me.user.uid,alice.uid);assert.equal(me.user.email,alice.email);
   const unknown=await good('GET','/api/auth/me',undefined);assert.equal(unknown.user,null);
@@ -143,4 +144,34 @@ test('accounts and ledger data survive a new server instance',async()=>{
   assert.equal((await good('GET',`/api/ledgers/${f.ledger}`,undefined,alice)).ledger.id,f.ledger);
   const response=await request('GET','/index.html');assert.equal(response.statusCode,200);assert.doesNotMatch(response.body,/firebase|rosefire/i);
   assert.equal((await request('GET','/history.html')).statusCode,404);
+});
+
+
+test('member correction commands enforce ownership, references and cross-account visibility',async()=>{
+  const f=await fixture();await join(f);
+  const id=await command(f.ledger,'addMember',['Typo'],bob);
+  await command(f.ledger,'renameMember',[id,'Correct','Typo'],bob);
+  let s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,alice);
+  assert.equal(s.members.find(m=>m.id===id).name,'Correct');
+  const key=randomUUID();await command(f.ledger,'removeMember',[id],bob,key);await command(f.ledger,'removeMember',[id],bob,key);
+  s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,alice);assert.equal(s.members.some(m=>m.id===id),false);
+  const ownerMember=await command(f.ledger,'addMember',['Owner temp'],alice);
+  const response=await request('POST',`/api/ledgers/${f.ledger}/commands`,{type:'renameMember',args:[ownerMember,'No','Owner temp']},bob);assert.ok(response.statusCode>=400);
+  const expense=await command(f.ledger,'addExpense',[{...payload(f),shares:{owner:5001,[ownerMember]:5000}}],alice);
+  await command(f.ledger,'reverseExpense',[expense],alice);
+  assert.ok((await request('POST',`/api/ledgers/${f.ledger}/commands`,{type:'removeMember',args:[ownerMember]},alice)).statusCode>=400);
+});
+test('two accounts recover a conflicting correction without overwriting unrelated content',async()=>{
+  const {expenseForm,reconcileExpenseDraft,resolveExpenseDraft}=await import('../public/scripts/expense-recovery.mjs');
+  const f=await fixture();await join(f);
+  const id=await command(f.ledger,'addExpense',[{...payload(f),payerMemberId:f.member}],bob);
+  let s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,bob),base=s.expenses.find(e=>e.id===id);
+  const record={options:{expenseId:id,initial:base},form:expenseForm(base)};record.form.fields.title='Bob correction';
+  await command(f.ledger,'updateExpense',[id,{...base,expectedVersion:1,note:'Alice receipt note',changeReason:'Add note'}],alice);
+  const stale=await request('POST',`/api/ledgers/${f.ledger}/commands`,{type:'updateExpense',args:[id,{...base,title:'Bob correction',expectedVersion:1,changeReason:'Fix title'}]},bob);assert.equal(stale.statusCode,409);
+  s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,bob);const latest=s.expenses.find(e=>e.id===id);
+  const next=resolveExpenseDraft(record,latest,reconcileExpenseDraft(record,latest));
+  await command(f.ledger,'updateExpense',[id,{...latest,title:next.form.fields.title,note:next.form.fields.note,expectedVersion:next.options.initial.version,changeReason:'Fix title after review'}],bob);
+  s=await good('GET',`/api/ledgers/${f.ledger}`,undefined,alice);const final=s.expenses.find(e=>e.id===id);
+  assert.equal(final.title,'Bob correction');assert.equal(final.note,'Alice receipt note');assert.equal(final.version,3);assert.equal(final.history.length,3);
 });

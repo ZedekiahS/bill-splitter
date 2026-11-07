@@ -36,7 +36,7 @@ const messages = Object.assign(Object.create(null), {
   '只有收款人或账本管理员可以确认或撤销记录。': 'Only the recipient or ledger owner can confirm or reverse a payment.',
   '这笔费用已撤销。': 'This expense has been reversed.',
   '请选择账本中的付款人。': 'Choose a payer from this ledger.',
-  '每笔费用最多选择 8 位分摊成员；账本成员数量不受此限制。': 'An expense can be split among up to 8 people. A ledger can have more members.',
+  '每笔费用最多选择 50 位分摊成员；账本成员数量不受此限制。': 'An expense can be split among up to 50 people. A ledger can have more members.',
   '请选择账本中的参与成员。': 'Choose participants from this ledger.',
   '分摊金额不能超过总额。': 'The shares cannot exceed the total.',
   '确认金额不能超过这位成员尚未偿还的金额。': 'The payment cannot exceed this member’s outstanding amount.',

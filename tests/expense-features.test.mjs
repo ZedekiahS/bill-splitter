@@ -53,8 +53,8 @@ test('itemized normalization copies input rows and trims titles without mutating
 });
 
 test('itemized bills reject missing or duplicate diners and dangerous member keys', () => {
-  for (const ids of [[], ['a', 'a'], ['__proto__'], ['constructor'], [''], [null], Array.from({length:9}, (_,i) => `m${i}`)]) assert.throws(() => itemizedShares([item(100, ids)]));
-  assert.throws(() => itemizedShares([item(100, ['a','b','c','d','e']), item(100, ['f','g','h','i'])]));
+  for (const ids of [[], ['a', 'a'], ['__proto__'], ['constructor'], [''], [null], Array.from({length:51}, (_,i) => `m${i}`)]) assert.throws(() => itemizedShares([item(100, ids)]));
+  assert.throws(() => itemizedShares([item(100, Array.from({length:30},(_,i)=>`a${i}`)), item(100, Array.from({length:21},(_,i)=>`b${i}`))]));
 });
 
 test('itemized bills validate row counts, item titles and positive exact cents', () => {

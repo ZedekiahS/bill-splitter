@@ -22,11 +22,11 @@ export function itemizedShares(items) {
   const normalized = items.map(item => {
     const title = nonemptyText(item?.title, 120, '项目名称不能为空，且不能超过 120 个字。');
     const amountCents = assertCents(item.amountCents);
-    if (!Array.isArray(item.memberIds) || !item.memberIds.length || item.memberIds.length > 8) throw new Error('每个项目请选择 1–8 位参与成员。');
+    if (!Array.isArray(item.memberIds) || !item.memberIds.length || item.memberIds.length > 50) throw new Error('每个项目请选择 1–50 位参与成员。');
     const memberIds = [...item.memberIds];
     const shares = splitShares(amountCents, memberIds);
     for (const [id, cents] of Object.entries(shares)) totals.set(id, (totals.get(id) || 0n) + BigInt(cents));
-    if (totals.size > 8) throw new Error('每笔费用最多选择 8 位分摊成员；账本成员数量不受此限制。');
+    if (totals.size > 50) throw new Error('每笔费用最多选择 50 位分摊成员；账本成员数量不受此限制。');
     amount += BigInt(amountCents);
     safeTotal(amount);
     return { title, amountCents, memberIds };

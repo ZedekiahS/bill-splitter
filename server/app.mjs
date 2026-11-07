@@ -43,10 +43,14 @@ export async function buildApp({pool,origins,production=false,registration=true,
   app.post('/api/auth/register',(request,reply)=>auth.register(request,reply));
   app.post('/api/auth/login',(request,reply)=>auth.login(request,reply));
   app.post('/api/auth/logout',(request,reply)=>auth.logout(request,reply));
+  app.post('/api/auth/recovery-code',request=>auth.recoveryCode(request));
+  app.post('/api/auth/recover',(request,reply)=>auth.recover(request,reply));
   const result=async promise=>({result:(await promise)??null});
   app.get('/api/ledgers',request=>ledgers.list(request.user));
   app.get('/api/ledger-updates',request=>ledgers.updates(request.user));
   app.post('/api/ledgers',request=>result(ledgers.create(request.user,request.body,request.headers['idempotency-key'])));
+  app.post('/api/ledger-import/preview',{bodyLimit:29*1024*1024},request=>ledgers.previewImport(request.user,request.body));
+  app.post('/api/ledger-import',{bodyLimit:29*1024*1024},request=>result(ledgers.import(request.user,request.body,request.headers['idempotency-key'])));
   app.get('/api/ledgers/:id/export',async(request,reply)=>{
     const snapshot=await ledgers.get(request.user,request.params.id);
     const archive=exportStream(snapshot,id=>ledgers.receipt(request.user,request.params.id,id));

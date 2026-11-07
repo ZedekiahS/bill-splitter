@@ -604,3 +604,47 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
 .entry-member-add summary { color: var(--primary); cursor: pointer; padding-block: 10px; }
 .inline-member-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
 .inline-member-fields .form-field { flex: 1 1 160px; margin: 0; }
+
+/* Keep participant selection and conflict review within the current task. */
+.participant-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:12px; }
+.participant-tools > span { margin-right:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
+.participant-tools .text-link, .entry-member-add .text-link { min-height:44px; }
+.member-search { display:block; margin-bottom:12px; }
+.member-matches { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.member-check[hidden] { display:none; }
+.draft-difference { border:0; border-top:1px solid var(--border); padding:20px 0; margin:16px 0; min-width:0; }
+.draft-difference legend { font-weight:600; padding-right:12px; }
+.draft-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.draft-comparison label { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.draft-comparison label > span { white-space:pre-wrap; overflow-wrap:anywhere; }
+.draft-comparison label > span:has(input) { display:flex; align-items:center; gap:8px; min-height:44px; }
+.draft-comparison input { accent-color:var(--primary); }
+.draft-comparison small { color:var(--primary); }
+@media(max-width:600px) { .draft-comparison { grid-template-columns:1fr; gap:20px; } .participant-tools { gap:4px 12px; } }
+
+.member-search[hidden] { display:none; }
+
+@media(max-width:600px) { .split-choice { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.expense-filter-fields { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.expense-filter-fields .form-field { margin:0; min-width:0; }
+.settlement-group,.payment-record { border-bottom:1px solid var(--border); padding:12px 0; }
+.settlement-group:last-child,.payment-record:last-child { border:0; }
+.settlement-group summary,.payment-record summary { cursor:pointer; padding:10px 0; color:var(--muted); font-size:13px; }
+.settlement-line { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--border); }
+.settlement-line > :first-child { flex:1; min-width:0; overflow-wrap:anywhere; text-align:left; }
+.settlement-line small { display:block; color:var(--muted); font-size:12px; }
+.member-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; margin:0 0 28px; }
+.member-totals dt { color:var(--muted); font-size:13px; }
+.member-totals dd { margin:6px 0 0; font-weight:650; font-size:20px; }
+@media(max-width:700px) {
+ .expense-filter-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .expense-filter-fields > :last-child { grid-column:1/-1; }
+ .member-totals { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .settlement-line { flex-wrap:wrap; }
+ .settlement-line > small:last-child { flex-basis:100%; }
+}
+.pending-tasks { display:flex; flex-wrap:wrap; align-items:center; gap:12px 24px; margin:0 0 24px; padding:16px 20px; background:var(--surface); border:1px solid var(--border); border-radius:12px; }
+.pending-tasks[hidden] { display:none; }
+.pending-tasks h2 { font-size:15px; margin:0; }
+.pending-tasks button { min-height:44px; }
+.member-row.spacious { flex-wrap:wrap; }
