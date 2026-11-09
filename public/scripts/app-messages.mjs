@@ -1,4 +1,7 @@
 export default {
+ '核实上次收款':'Check previous payment',
+ '上次收款结果待核实':'Previous payment awaiting confirmation',
+ '这个组合已删除，请核对后继续。':'This group was deleted. Review its status to continue.',
  '核实本次收款结果':'Check this payment’s result',
  '本次收款 {amount}，保存结果待核实。':'This payment of {amount} is awaiting confirmation.',
  '暂未确认本次收款是否保存。请核实结果，无需重新记一笔。':'This payment’s result is unknown. Check its result instead of recording another payment.',

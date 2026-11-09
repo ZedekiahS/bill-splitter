@@ -13,7 +13,8 @@ export function mountParticipantTools(c){
     const input=$('#edit-group-name');if(!input||!renderedGroup)return;
     const base=edits[renderedGroup.id]?.base||{name:renderedGroup.name,memberIds:[...renderedGroup.memberIds],version:renderedGroup.version};
     const memberIds=[...groupReview.querySelectorAll('[data-edit-group-member]:checked')].map(box=>box.value),name=input.value;
-    if(name===base.name&&sameIds(memberIds,base.memberIds))delete edits[renderedGroup.id];
+    // Returning to old field values does not acknowledge a newer remote version.
+    if(name===base.name&&sameIds(memberIds,base.memberIds)&&base.version===renderedGroup.version)delete edits[renderedGroup.id];
     else edits[renderedGroup.id]={base,name,memberIds};
   }
   batch.value=c.recovered?.batchNames||'';

@@ -581,7 +581,7 @@ test('three accounts see one receipt after offline and repeated lost-response re
  const f=await trio(),realFetch=globalThis.fetch,storage=new Map(),storageDescriptor=Object.getOwnPropertyDescriptor(globalThis,'sessionStorage');
  Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}});
  try{
-  for(const fault of ['offline-before-send','lost-response','truncated-response','server-error']){
+  for(const amountCents of [5000,10000])for(const fault of ['offline-before-send','lost-response','truncated-response','server-error']){
    const id=await command(alice,f.id,'addExpense',[expense('owner',{[f.b]:10000},10000,{title:fault})]),writes=[];
    let failures=2;
    globalThis.fetch=async(url,options)=>{
@@ -600,7 +600,7 @@ test('three accounts see one receipt after offline and repeated lost-response re
     }
     return response;
    };
-   const store=createApiStore(alice),payload={expenseId:id,fromMemberId:f.b,toMemberId:'owner',expectedVersion:1,expectedRemaining:10000,amountCents:5000,date:'2026-11-07',note:'One actual transfer'};
+   const store=createApiStore(alice),payload={expenseId:id,fromMemberId:f.b,toMemberId:'owner',expectedVersion:1,expectedRemaining:10000,amountCents,date:'2026-11-07',note:'One actual transfer'};
    let submission=paymentSubmission(store,f.id,id,f.b);
    await assert.rejects(submission.submit(payload));assert.ok(submission.pending);assert.equal(storage.size,1);
    const fresh=await import(`../public/scripts/payment-submission.mjs?reload=${randomUUID()}`);
@@ -611,8 +611,8 @@ test('three accounts see one receipt after offline and repeated lost-response re
    assert.equal(storage.size,0);assert.equal(new Set(writes.map(w=>w.key)).size,1);assert.equal(new Set(writes.map(w=>w.body)).size,1);
    globalThis.fetch=realFetch;
    const views=await consistent(f),payments=views.payments.filter(p=>p.expenseId===id);
-   assert.equal(payments.length,1);assert.equal(payments[0].amountCents,5000);assert.equal(payments[0].toMemberId,'owner');
-   assert.equal(remainingFor(views.expenses.find(e=>e.id===id),f.b),5000);
+   assert.equal(payments.length,1);assert.equal(payments[0].amountCents,amountCents);assert.equal(payments[0].toMemberId,'owner');
+   assert.equal(remainingFor(views.expenses.find(e=>e.id===id),f.b),10000-amountCents);
   }
  }finally{globalThis.fetch=realFetch;if(storageDescriptor)Object.defineProperty(globalThis,'sessionStorage',storageDescriptor);else delete globalThis.sessionStorage;}
 });
@@ -629,4 +629,13 @@ test('group rename retains inactive members across accounts without permitting n
  assert.equal((await post(alice,f.id,'saveParticipantGroup',[{name:'Foreign',memberIds:['foreign'],expectedVersion:2},g.id])).status,400);
  await command(alice,f.id,'setMemberStatus',[f.b,'active']);await command(alice,f.id,'setMemberStatus',[f.c,'active']);
  const final=await consistent(f);assert.deepEqual(final.participantGroups.find(row=>row.id===g.id).memberIds,[f.b,f.c]);
+});
+
+
+test('deleted group update returns a recoverable conflict while real permission failures remain forbidden',async()=>{
+ const f=await trio(),g=await command(bob,f.id,'saveParticipantGroup',[{name:'Dinner',memberIds:['owner',f.b]}]);
+ assert.equal((await post(chen,f.id,'saveParticipantGroup',[{name:'Not mine',memberIds:['owner'],expectedVersion:1},g.id])).status,403);
+ await command(alice,f.id,'deleteParticipantGroup',[g.id,1]);
+ const result=await post(bob,f.id,'saveParticipantGroup',[{name:'My draft',memberIds:['owner',f.b],expectedVersion:1},g.id]);
+ assert.equal(result.status,409);assert.match(result.data.error.message,/删除/);assert.deepEqual((await consistent(f)).participantGroups,[]);
 });

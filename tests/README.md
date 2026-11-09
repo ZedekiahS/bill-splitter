@@ -218,3 +218,9 @@ The three-account PostgreSQL scenarios inject offline/lost/truncated/5xx respons
 and verify one journal entry after retries and tab reload. Current totals: 223
 local tests and 56 API tests. See
 `docs/review/retry-and-editor-recovery-2026-11-07.md` for scope and limitations.
+
+November 9 expands recovery coverage to 232 local / 57 API tests: reverting an
+old group name after conflict cannot adopt a newer version; full-payment retries
+remain reachable from expense details after reload; item-only mode conversions
+keep totals and participants consistent; deleted-group updates report a conflict
+instead of a permission failure. See `docs/review/recovery-boundaries-2026-11-09.md`.

@@ -154,7 +154,8 @@ export function createStateStore({read,mutate,user}) {
         const ledger=state.ledgers[id];writable(ledger,user);
         const groups=state.participantGroups?.[id]||{},prior=groupId&&Object.hasOwn(groups,groupId)?groups[groupId]:null;
         if(groupId){
-          if(!prior||ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
+          if(!prior)throw Object.assign(new Error('这个组合已删除，请核对后继续。'),{statusCode:409});
+          if(ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
           if(payload.expectedVersion!==prior.version)throw Object.assign(new Error('组合已更新，请重新打开后修改。'),{statusCode:409});
         }
         const next=groupData(payload,state.members[id],prior);

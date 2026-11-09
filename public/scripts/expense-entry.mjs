@@ -266,10 +266,22 @@ export function openExpenseEditor(context, options = {}) {
   form.addEventListener('input',event=>{if(event.target.hasAttribute('data-assign-item'))return;if(event.target.hasAttribute('data-share-amount'))amountDraftInitialized=true;if(event.target.hasAttribute('data-percent')){if(chosenCount()===2)percentEdited.clear();percentEdited.add(event.target.dataset.percent);}$('#form-error').hidden=true;preview();});
   form.addEventListener('change',preview);
   form.querySelectorAll('[data-split]').forEach(button=>button.addEventListener('click',()=>{
+    const leavingItems=splitType==='items'&&button.dataset.split!=='items';
+    let convertedItems=null;
+    if(leavingItems){
+      // Restore a manual draft when one exists. Otherwise initialize from the
+      // same valid item calculation, including its participants and shares.
+      if(!manualAmount.trim())try{
+        convertedItems=calculate();manualAmount=amountText(convertedItems.amount);
+        form.querySelectorAll('[name="participant"]').forEach(box=>box.checked=convertedItems.ids.includes(box.value));
+      }catch{/* An unfinished item list cannot initialize another split method. */}
+      form.elements.amount.value=manualAmount;
+    }
     if(button.dataset.split==='amount'&&!amountDraftInitialized){
       try {
         const data=new FormData(form),amount=parseMoney(data.get('amount')),ids=data.getAll('participant');let shares;
-        try{shares=calculate().shares;}catch{shares=splitShares(amount,ids);}
+        if(leavingItems)shares=convertedItems?.shares||splitShares(amount,ids);
+        else try{shares=calculate().shares;}catch{shares=splitShares(amount,ids);}
         const remainder=amount-Object.values(shares).reduce((sum,value)=>sum+value,0),payer=data.get('payer');
         if(remainder&&ids.includes(payer))shares[payer]+=remainder;
         form.querySelectorAll('[data-share-amount]').forEach(input=>{if(Object.hasOwn(shares,input.dataset.shareAmount))input.value=amountText(shares[input.dataset.shareAmount]);});
@@ -277,7 +289,6 @@ export function openExpenseEditor(context, options = {}) {
       }catch{/* Leave fields empty until an amount and participants are available. */}
     }
     if(splitType!=='items')manualAmount=form.elements.amount.value;
-    if(splitType==='items'&&button.dataset.split!=='items')form.elements.amount.value=manualAmount;
     splitType=button.dataset.split;
     form.querySelectorAll('[data-split]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});
     updateMode();$('#form-error').hidden=true;preview();saveDraft();
