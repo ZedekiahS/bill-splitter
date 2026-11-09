@@ -34,8 +34,9 @@ export function createApiStore(user){
   const post=(path,body)=>apiRequest(path,{method:'POST',body});
   const store={currentUser:user,mode:'api',listLedgers:()=>apiRequest('/api/ledgers'),loadLedger:id=>apiRequest(`/api/ledgers/${encodeURIComponent(id)}`),createLedger:payload=>post('/api/ledgers',payload),getInvite:token=>apiRequest(`/api/invites/${encodeURIComponent(token)}`),claimInvite:(token,payload)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'claim',...payload}),approveClaim:(token,uid)=>post(`/api/invites/${encodeURIComponent(token)}/commands`,{type:'approve',uid})};
   store.saveDraftCommand=(id,type,args,key)=>apiRequest(`/api/ledgers/${encodeURIComponent(id)}/commands`,{method:'POST',body:{type,args},idempotencyKey:key});
+  store.personalConsumption=()=>apiRequest('/api/personal-consumption');
   store.listUpdates=()=>apiRequest('/api/ledger-updates');
-  for(const type of ['setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']){
+  for(const type of ['updateProject','setAnalyticsInclusion','setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']){
     store[type]=(id,...args)=>post(`/api/ledgers/${encodeURIComponent(id)}/commands`,{type,args});
   }
   return store;

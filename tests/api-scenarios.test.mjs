@@ -639,3 +639,41 @@ test('deleted group update returns a recoverable conflict while real permission 
  const result=await post(bob,f.id,'saveParticipantGroup',[{name:'My draft',memberIds:['owner',f.b],expectedVersion:1},g.id]);
  assert.equal(result.status,409);assert.match(result.data.error.message,/删除/);assert.deepEqual((await consistent(f)).participantGroups,[]);
 });
+
+
+test('project consumption spans ledgers with account identity, own preferences, currency and repayment isolation',async()=>{
+ const f=await trio();
+ await command(alice,f.id,'updateProject',[{title:'青岛三人旅行',projectType:'trip',startDate:'2026-10-29',endDate:'2026-11-02',activityStatus:'ended',expectedVersion:1}]);
+ assert.equal((await post(bob,f.id,'updateProject',[{title:'Changed',expectedVersion:2}])).status,403);
+ assert.equal((await post(alice,f.id,'updateProject',[{title:'Stale',expectedVersion:1}])).status,409);
+ const hotel=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000,{category:'lodging'})]);
+ await command(bob,f.id,'addExpense',[expense(f.b,{owner:10000,[f.b]:10000,[f.c]:10000},30000,{category:'food'})]);
+ await command(chen,f.id,'addExpense',[expense(f.c,{owner:5000,[f.b]:5000,[f.c]:5000},15000,{category:'entertainment'})]);
+ const total=async u=>{const data=await good(u,'GET','/api/personal-consumption');return data.rows.filter(r=>r.ledgerId===f.id).reduce((n,r)=>n+r.amountCents,0);};
+ for(const u of [alice,bob,chen])assert.equal(await total(u),45000);
+ const outsiders=await good(outsider,'GET','/api/personal-consumption');assert.ok(!outsiders.projects.some(p=>p.id===f.id));assert.ok(!outsiders.rows.some(r=>r.ledgerId===f.id));
+ await command(alice,f.id,'recordPayment',[{expenseId:hotel,fromMemberId:f.b,amountCents:30000,date:'2026-11-09'}]);assert.equal(await total(bob),45000);
+ const latest=(await snapshot(alice,f.id)).expenses.find(e=>e.id===hotel);
+ await command(alice,f.id,'updateExpense',[hotel,{...latest,category:'other',expectedVersion:latest.version,changeReason:'重新分类'}]);
+ assert.equal((await good(chen,'GET','/api/personal-consumption')).rows.find(r=>r.ledgerId===f.id&&r.expenseId===hotel).category,'other');
+ await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal(await total(alice),45000);
+ await command(bob,f.id,'setAnalyticsInclusion',[false]);
+ assert.equal((await good(bob,'GET','/api/personal-consumption')).projects.find(p=>p.id===f.id).included,false);
+ assert.equal((await good(alice,'GET','/api/personal-consumption')).projects.find(p=>p.id===f.id).included,true);
+ const secondSession=await login(bob);assert.equal((await good(secondSession,'GET','/api/personal-consumption')).projects.find(p=>p.id===f.id).included,false);
+ assert.equal((await post(outsider,f.id,'setAnalyticsInclusion',[true])).status,403);
+ const saved=await snapshot(alice,f.id),bundle=ledgerExport(saved),copyId=await good(alice,'POST','/api/ledger-import',{format:'json',content:JSON.stringify(bundle.data),memberId:'owner'});
+ const report=await good(alice,'GET','/api/personal-consumption');assert.equal(report.projects.find(p=>p.id===copyId).included,false);
+ assert.equal((await snapshot(alice,copyId)).ledger.projectType,'trip');assert.equal((await snapshot(alice,copyId)).ledger.activityStatus,'ended');
+ const usd=await ledger(alice,'USD');await command(alice,usd,'addExpense',[expense('owner',{owner:1000},1000,{category:'shopping'})]);
+ assert.equal((await good(alice,'GET','/api/personal-consumption')).rows.find(r=>r.ledgerId===usd).currency,'USD');
+ assert.equal((await good(null,'GET','/api/auth/me')).user,null);
+ assert.equal((await request(null,'GET','/api/personal-consumption')).status,401);
+});
+
+test('concurrent repeated group deletion returns a deleted conflict to the second authorized account',async()=>{
+ const f=await trio(),g=await command(bob,f.id,'saveParticipantGroup',[{name:'同行',memberIds:['owner',f.b,f.c]}]);
+ await command(alice,f.id,'deleteParticipantGroup',[g.id,g.version]);
+ const deleted=await post(bob,f.id,'deleteParticipantGroup',[g.id,g.version]);assert.equal(deleted.status,409);assert.match(deleted.data.error.message,/已删除/);
+ await consistent(f);
+});

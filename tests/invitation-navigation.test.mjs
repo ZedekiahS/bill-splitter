@@ -1,3 +1,4 @@
+import {categories} from '../public/scripts/expense-analytics.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -14,7 +15,7 @@ function fixture(status) {
   const context = vm.createContext({URL, URLSearchParams, location,
     history:{replaceState(_state,_title,url){location.href=String(url);}},
     document:{querySelectorAll(){return [];},querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
-    window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
+    window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},analyticsMessages:{},categories,featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
     createDraftStore:()=>({}),calls,parseMoney,formatMoney,remainingFor,consumptionShares,paymentSubmission,formatDate:s=>s,
   });
   vm.runInContext(source,context);

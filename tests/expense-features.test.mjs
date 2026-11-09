@@ -68,7 +68,7 @@ test('item totals accept the safe cent limit and reject overflow before rounding
 });
 
 test('optional expense extras default safely for legacy expenses', () => {
-  assert.deepEqual(validateExpenseExtras({}), { note: '', items: [], receipts: [] });
+  assert.deepEqual(validateExpenseExtras({}), { category:'uncategorized', note: '', items: [], receipts: [] });
   assert.equal(validateExpenseExtras({note:'  分享菜品  '}).note, '分享菜品');
   assert.throws(() => validateExpenseExtras({note:'x'.repeat(1001)}));
   assert.throws(() => validateExpenseExtras({note:{text:'hello'}}));

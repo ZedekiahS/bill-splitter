@@ -70,6 +70,7 @@ node_modules/
 
 # Local design-session state
 .impeccable/build/
+.impeccable/review/
 .local/
 .env.*
 !.env.example

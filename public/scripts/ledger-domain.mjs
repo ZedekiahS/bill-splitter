@@ -1,3 +1,4 @@
+import {projectData,personalData} from './expense-analytics.mjs';
 import { assertCents, remainingFor, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
 import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
 import { expenseVersion, legacyHistory, ensureHistory, appendHistory } from './expense-history.mjs';
@@ -66,7 +67,7 @@ function templateData(payload, members, user, timestamp, previous) {
   const shares = consumptionShares(payload);
   const expense = expenseData({ ...payload, shares, date: today(), receipts: [], sourceTemplateId: null, sourceDate: null }, members, user.uid, timestamp);
   return { title: expense.title, amountCents: expense.amountCents, payerMemberId: expense.payerMemberId,
-    shares: expense.shares, note: expense.note, items: expense.items, ...schedule,
+    shares: expense.shares, category:expense.category, note: expense.note, items: expense.items, ...schedule,
     status: previous?.status || "active", createdByUid: previous?.createdByUid || user.uid,
     createdAt: previous?.createdAt || timestamp, updatedAt: timestamp };
 }
@@ -116,6 +117,9 @@ export function createStateStore({read,mutate,user}) {
   const me=()=>requireUser(user);
     const rows = table => Object.entries(table || {}).map(([id, data]) => withId(id, data));
     Object.assign(store, {
+      async personalConsumption(){const snapshots=await Promise.all((await store.listLedgers()).map(l=>store.loadLedger(l.id)));return personalData(snapshots,me().uid);},
+      async setAnalyticsInclusion(id,included){return mutate((state,user)=>{const ledger=state.ledgers[id];readable(ledger,user);if(typeof included!=='boolean')throw new Error('统计范围无效。');(ledger.analyticsInclusions||={})[user.uid]=included;});},
+      async updateProject(id,payload){return mutate((state,user,at)=>{const ledger=state.ledgers[id];owner(ledger,user);if(payload.expectedVersion!==(ledger.projectVersion||1))throw Object.assign(new Error('账本设置已更新，请重新打开后修改。'),{statusCode:409});const next=projectData(payload),title=text(payload.title,'账本名称');Object.assign(ledger,next,{title,projectVersion:(ledger.projectVersion||1)+1});});},
       async listLedgers() { const uid = me().uid; return rows(read().ledgers).filter(ledger => ledger.memberUids.includes(uid)); },
       async loadLedger(id) {
         const state = read(), ledger = state.ledgers[id], user = me(); readable(ledger, user);
@@ -126,7 +130,7 @@ export function createStateStore({read,mutate,user}) {
       async createLedger(payload) { return mutate((state, user, createdAt) => {
         const id = newId(), currency = text(payload.currency || "CNY", "币种", 3).toUpperCase();
         if (!/^[A-Z]{3}$/.test(currency)) throw new Error("币种应为三位代码，例如 CNY。");
-        state.ledgers[id] = { ownerUid: user.uid, memberUids: [user.uid], title: text(payload.title, "账本名称"), currency, timeZone:timeZone(payload.timeZone),createdAt, lastApprovedInviteId: null };
+        state.ledgers[id] = { ownerUid: user.uid, memberUids: [user.uid], title: text(payload.title, "账本名称"), ...projectData(payload), projectVersion:1, currency, timeZone:timeZone(payload.timeZone),createdAt, lastApprovedInviteId: null };
         state.members[id] = { owner: { name: text(payload.ownerName || user.displayName || "我", "成员名字"), uid: user.uid, createdAt, claimInviteId: null } };
         state.expenses[id] = {}; state.payments[id] = {}; return id;
       }); },
@@ -166,7 +170,8 @@ export function createStateStore({read,mutate,user}) {
       });},
       async deleteParticipantGroup(id,groupId,expectedVersion){return mutate((state,user)=>{
         const ledger=state.ledgers[id];writable(ledger,user);const groups=state.participantGroups?.[id]||{},prior=Object.hasOwn(groups,groupId)?groups[groupId]:null;
-        if(!prior||ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
+        if(!prior)throw Object.assign(new Error('这个组合已删除，请核对后继续。'),{statusCode:409});
+        if(ledger.ownerUid!==user.uid&&prior.createdByUid!==user.uid)throw new Error('只有组合创建者或账本管理员可以修改组合。');
         if(expectedVersion!==prior.version)throw Object.assign(new Error('组合已更新，请重新打开后修改。'),{statusCode:409});
         delete state.participantGroups[id][groupId];
       });},
@@ -233,7 +238,7 @@ export function createStateStore({read,mutate,user}) {
         const next=expenseData({...payload,receipts:[],sourceTemplateId:previous.sourceTemplateId,sourceDate:previous.sourceDate},state.members[id],previous.createdByUid,previous.createdAt,previous);
         if(state.ledgers[id].ownerUid!==user.uid&&state.members[id][next.payerMemberId].uid!==user.uid)throw new Error('只能记录由自己垫付的费用。');
         next.receipts=receipts;
-        const financial=record=>JSON.stringify([record.amountCents,record.payerMemberId,Object.entries(consumptionShares(record)).sort(([a],[b])=>a.localeCompare(b)),record.items||[]]);
+        const financial=record=>JSON.stringify([record.amountCents,record.payerMemberId,Object.entries(consumptionShares(record)).sort(([a],[b])=>a.localeCompare(b)),(record.items||[]).map(({category,...item})=>item)]);
         const financialChanged=financial(next)!==financial(previous);
         if(financialChanged&&Object.values(previous.repaid).some(value=>value!==0))throw new Error('已有收款记录。请先撤销相关收款，再更改金额、垫付人或分摊。');
         if(!financialChanged)next.shares=structuredClone(previous.shares);

@@ -52,6 +52,7 @@ export async function buildApp({pool,origins,production=false,registration=true,
   app.post('/api/auth/recover',(request,reply)=>auth.recover(request,reply));
   const result=async promise=>({result:(await promise)??null});
   app.get('/api/ledgers',request=>ledgers.list(request.user));
+  app.get('/api/personal-consumption',request=>ledgers.personalConsumption(request.user));
   app.get('/api/ledger-updates',request=>ledgers.updates(request.user));
   app.post('/api/ledgers',request=>result(ledgers.create(request.user,request.body,request.headers['idempotency-key'])));
   app.post('/api/ledger-import/preview',{bodyLimit:29*1024*1024},request=>ledgers.previewImport(request.user,request.body));

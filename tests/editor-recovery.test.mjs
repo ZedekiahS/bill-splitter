@@ -49,7 +49,7 @@ test('unassigned item participant survives modes and draft recovery until explic
  const f=await fixture();let editor=await f.open();f.input('[name="title"]','Dinner');await f.click('[data-split="items"]');
  f.input('[data-item-title]','Meal');f.input('[data-item-amount]','100');f.input('[name="inlineMemberName"]','New guest');await f.click('#entry-add-member');
  await f.click('[data-split="equal"]');await editor.flush();editor=await f.open(f.draft);await f.click('[data-split="items"]');
- assert.equal(f.$('#item-member-picker').hidden,false);await f.click('[type="submit"]');assert.equal(f.saved.length,0);assert.match(f.errors.at(-1)?.message||'',/选择参与项目/);
+ assert.equal(f.$('#item-member-picker').hidden,false);await f.click('[type="submit"]');assert.equal(f.saved.length,0);assert.match(f.errors.at(-1)?.message||'',/选择参与条目/);
  await f.click('#item-assignment-skip');await f.click('[type="submit"]');assert.equal(f.saved.length,1);
 });
 
@@ -145,4 +145,21 @@ test('converted item total does not carry into the next expense',async()=>{
  assert.equal(f.saved[0]?.amountCents,10000);await f.open(null,f.saveOptions[0].nextEntry);
  assert.equal(f.$('[name="amount"]').value,'');assert.equal(f.$('[name="title"]').value,'');
  assert.ok([...document.querySelectorAll('[data-share-amount]')].every(input=>input.value===''));
+});
+
+
+test('expense and item categories survive editor drafts and submit with itemized amounts',async()=>{
+ const f=await fixture();let editor=await f.open();f.input('[name="title"]','Dinner and parking');f.input('[name="category"]','food');
+ await f.click('[data-split="items"]');f.input('[data-item-title]','Dinner');f.input('[data-item-amount]','90');
+ await f.click('#add-item');const rows=[...document.querySelectorAll('.item-row')];rows[1].querySelector('[data-item-title]').value='Parking';rows[1].querySelector('[data-item-amount]').value='10';rows[1].querySelector('[data-item-category]').value='transport';rows[1].querySelector(`[data-item-member][value="${f.other}"]`).checked=false;
+ await editor.flush();editor=await f.open(f.draft);assert.equal(f.$('[name="category"]').value,'food');assert.equal(document.querySelectorAll('[data-item-category]')[1].value,'transport');
+ await f.click('[type="submit"]');assert.equal(f.saved[0].category,'food');assert.equal(f.saved[0].items[1].category,'transport');assert.equal(f.saved[0].amountCents,10000);assert.equal(f.saved[0].shares.owner,5500);
+});
+
+test('stale delete confirmation refreshes deleted group while retaining unsaved edits',async()=>{
+ const f=await fixture();await f.open();await f.chooseGroup();f.input('#edit-group-name','My changed name');
+ await f.click('[data-member-tool="ask-delete-group"]');
+ await f.store.deleteParticipantGroup(f.id,f.group.id,1);
+ await f.click('[data-member-tool="delete-group"]');
+ assert.match(f.$('#participant-tools-error').textContent,/已删除/);assert.match(f.$('#participant-group-review').textContent,/My changed name/);
 });

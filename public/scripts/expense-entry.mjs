@@ -1,3 +1,4 @@
+import {categories} from './expense-analytics.mjs';
 import { t, translateError } from './i18n.mjs';
 import { parseMoney, formatMoney, splitShares, consumptionShares } from './ledger-core.mjs';
 import { itemizedShares } from './expense-features.mjs';
@@ -30,7 +31,7 @@ export function openExpenseEditor(context, options = {}) {
   let memberTools,saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
   let splitType=recovered?.splitType||continuation?.splitType||(initial.items?.length?'items':initial.shares?'amount':'equal'), amountDraftInitialized=recovered?.amountDraftInitialized??Boolean(initial.shares||continuation?.splitType==='amount');
   let manualAmount=recovered?.manualAmount??(recovered?.splitType==='items'?'':recovered?.fields?.amount??(initial.amountCents?amountText(initial.amountCents):''));
-  let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds]}));
+  let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds],category:row.category||''}));
   let receipts=recovered?.receipts||(editing?[...(initial.receipts||[])]:[]), readingReceipts=false,addingMember=false,assignmentMember=!financialLocked&&!recurring&&context.onAddMember?recovered?.assignmentMember||null:null;
   const initialShares=initial.shares?consumptionShares(initial):{};
   const activeMembers=s.members.filter(m=>m.status!=='inactive');
@@ -44,6 +45,8 @@ export function openExpenseEditor(context, options = {}) {
   const amountRows=s.members.map(m=>`<label class="amount-field" data-amount-member="${escape(m.id)}"><span>${escape(m.name)}</span><span class="split-input-unit"><input class="form-input" inputmode="decimal" data-share-amount="${escape(m.id)}" placeholder="0.00" aria-label="${t('{name}承担金额', {name:escape(m.name)})}"><span>${escape(s.ledger.currency)}</span></span></label>`).join('');
   openDialog(t('记一笔共同开销'),`<form id="expense-form"><div class="entry-layout"><div class="entry-fields"><label class="form-field"><span class="field-label">${t('金额 ·')} ${escape(s.ledger.currency)}</span><input name="amount" id="new-amount" class="form-input amount-input" inputmode="decimal" placeholder="0.00" required autofocus></label><label class="form-field"><span class="field-label">${t('花在了哪里？')}</span><input class="form-input" name="title" maxlength="100" placeholder="${t('例如：周五一起吃火锅')}" required></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('谁先垫付')}</span><select class="form-select" name="payer">${payerOptions}</select></label><label class="form-field"><span class="field-label">${t('日期')}</span><input class="form-input" name="date" type="date" value="${localDate()}" required></label></div><fieldset class="participant-fieldset"><legend class="field-label">${t('谁参与这笔消费')}</legend><div class="participant-grid">${s.members.map((m,i)=>`<label class="member-check"><input type="checkbox" name="participant" value="${escape(m.id)}" ${defaultIds.includes(m.id)?'checked':''}>${avatar(m.name)}<span>${escape(m.name)}</span></label>`).join('')}</div><p class="form-hint">${t('付款人也可以参与分摊。只勾选实际消费的人，每笔最多 50 人。')}</p></fieldset><div class="split-choice" role="group" aria-label="${t('分摊方式')}"><button type="button" class="chip active" data-split="equal" aria-pressed="true">${t('均分')}</button><button type="button" class="chip" data-split="percent" aria-pressed="false">${t('按比例')}</button><button type="button" class="chip" data-split="amount" aria-pressed="false">${t('按金额')}</button></div><div id="percent-fields" hidden>${percentRows}<p class="form-hint">${t('每行右侧显示该比例对应的金额，精确到分。')}</p></div><div id="amount-fields" hidden><p class="form-hint">${t('直接填写每个人承担的金额，合计需要与账单总额一致。')}</p>${amountRows}<p id="amount-summary" class="split-summary" role="status"></p></div></div><aside class="entry-preview"><h3>${t('分摊预览')}</h3><div id="split-preview"><p class="muted">${t('填写金额后，就能看到每人承担多少。')}</p></div></aside></div>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('保存账单')}</button></div></form>`,'',true);
   const form=$('#expense-form');
+  const categoryOptions=(value='',inherit=false)=>(inherit?`<option value="">${t('沿用账单分类')}</option>`:'')+Object.entries(categories).map(([id,label])=>`<option value="${id}" ${value===id?'selected':''}>${t(label)}</option>`).join('');
+  form.elements.title.closest('label').insertAdjacentHTML('afterend',`<label class="form-field"><span class="field-label">${t('分类')}</span><select class="form-select" name="category">${categoryOptions(initial.category||'uncategorized')}</select></label>`);
   $('#dialog-title').textContent=editing?t('补充与更正账单'):templateMode?(options.templateId?t('编辑账单模板'):t('新建账单模板')):recurring?t('确认本期账单'):t('记一笔共同开销');
   const saveButton=form.querySelector('[type="submit"]');
   saveButton.textContent=editing?t('保存更正'):templateMode?t('保存模板'):recurring?t('确认并记账'):t('保存账单');
@@ -69,7 +72,7 @@ export function openExpenseEditor(context, options = {}) {
 
   form.querySelector('.split-choice').insertAdjacentHTML('beforeend',`<button type="button" class="chip" data-split="items" aria-pressed="false">${t('逐项分摊')}</button>`);
   const fields=form.querySelector('.entry-fields');
-  fields.insertAdjacentHTML('beforeend',`<div id="item-fields" hidden><p class="form-hint">${t('每项单独选择参与人，项目金额自动汇总。')}</p><div id="item-list" class="item-list"></div><button type="button" class="button secondary" id="add-item">${t('添加项目')}</button></div>
+  fields.insertAdjacentHTML('beforeend',`<div id="item-fields" hidden><p class="form-hint">${t('每项单独选择参与人，条目金额自动汇总。')}</p><div id="item-list" class="item-list"></div><button type="button" class="button secondary" id="add-item">${t('添加条目')}</button></div>
     <details class="entry-extras" ${initial.note||editing?'open':''}><summary>${templateMode?t('备注'):t('备注与收据')}</summary><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><textarea name="note" class="form-input" maxlength="1000" rows="3"></textarea></label>${templateMode?'':`<div class="receipt-dropzone" id="receipt-dropzone" tabindex="0" role="group" aria-label="${t('添加截图或收据')}"><label class="form-field"><span class="field-label">${t('添加截图或收据')}</span><input id="receipt-files" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple></label><p class="form-hint">${t('也可以拖入文件，或粘贴截图。')}</p><p class="form-hint">${t('最多 3 份。图片最大 10 MB，超过 2 MB 自动压缩；PDF 最大 2 MB。')}</p></div><div id="receipt-list" class="receipt-list"></div><p id="receipt-status" class="form-hint" role="status"></p>${editing?`<p class="form-hint">${t('移除的附件仍保留在操作历史中。')}</p>`:''}`}</details>`);
   if(editing)fields.insertAdjacentHTML('beforeend',`<label class="form-field change-reason"><span class="field-label">${t('更正说明')}</span><input name="changeReason" class="form-input" maxlength="300" placeholder="${t('例如：补充付款截图，或更正住宿金额')}" required></label>`);
   if(financialLocked)fields.insertAdjacentHTML('afterbegin',`<p class="form-hint">${t('已有收款，可补充备注和附件；更改金额或分摊前，请先撤销相关收款。')}</p>`);
@@ -81,20 +84,20 @@ export function openExpenseEditor(context, options = {}) {
     const updateSchedule=()=>{const repeat=form.elements.frequency.value!=='none';$('#schedule-start').hidden=!repeat;form.elements.startDate.required=repeat;$('#schedule-hint').hidden=!repeat;};
     form.elements.frequency.addEventListener('change',updateSchedule);updateSchedule();
   }
-  function readItemDrafts(){return [...form.querySelectorAll('.item-row')].map(row=>({title:row.querySelector('[data-item-title]').value,amount:row.querySelector('[data-item-amount]').value,memberIds:[...row.querySelectorAll('[data-item-member]:checked')].map(input=>input.value)}));}
+  function readItemDrafts(){return [...form.querySelectorAll('.item-row')].map(row=>({title:row.querySelector('[data-item-title]').value,amount:row.querySelector('[data-item-amount]').value,category:row.querySelector('[data-item-category]').value,memberIds:[...row.querySelectorAll('[data-item-member]:checked')].map(input=>input.value)}));}
   function renderItems(refreshTools=true){
-    $('#item-list').innerHTML=itemDrafts.map((row,i)=>`<fieldset class="item-row"><legend>${t('项目 {number}',{number:i+1})}</legend><div class="item-top"><label class="form-field"><span class="field-label">${t('项目名称')}</span><input data-item-title class="form-input" maxlength="120" value="${escape(row.title)}" aria-label="${t('项目 {number} 名称',{number:i+1})}"></label><label class="form-field"><span class="field-label">${t('金额')}</span><input data-item-amount class="form-input" inputmode="decimal" placeholder="0.00" value="${escape(row.amount)}" aria-label="${t('项目 {number} 金额',{number:i+1})}"></label><button type="button" class="text-link danger-link" data-remove-item="${i}" aria-label="${t('删除项目 {number}',{number:i+1})}">${t('删除')}</button></div><div class="item-members" role="group" aria-label="${t('项目 {number} 参与人',{number:i+1})}">${availableMembers.map(m=>`<label><input type="checkbox" data-item-member value="${escape(m.id)}" ${row.memberIds.includes(m.id)?'checked':''}>${escape(m.name)}</label>`).join('')}</div></fieldset>`).join('');
+    $('#item-list').innerHTML=itemDrafts.map((row,i)=>`<fieldset class="item-row"><legend>${t('条目 {number}',{number:i+1})}</legend><div class="item-top"><label class="form-field"><span class="field-label">${t('条目名称')}</span><input data-item-title class="form-input" maxlength="120" value="${escape(row.title)}" aria-label="${t('条目 {number} 名称',{number:i+1})}"></label><label class="form-field"><span class="field-label">${t('金额')}</span><input data-item-amount class="form-input" inputmode="decimal" placeholder="0.00" value="${escape(row.amount)}" aria-label="${t('条目 {number} 金额',{number:i+1})}"></label><button type="button" class="text-link danger-link" data-remove-item="${i}" aria-label="${t('删除条目 {number}',{number:i+1})}">${t('删除')}</button></div><label class="form-field"><span class="field-label">${t('分类')}</span><select class="form-select" data-item-category>${categoryOptions(row.category,true)}</select></label><div class="item-members" role="group" aria-label="${t('条目 {number} 参与人',{number:i+1})}">${availableMembers.map(m=>`<label><input type="checkbox" data-item-member value="${escape(m.id)}" ${row.memberIds.includes(m.id)?'checked':''}>${escape(m.name)}</label>`).join('')}</div></fieldset>`).join('');
     $('#add-item').disabled=itemDrafts.length>=8;renderItemPicker();if(refreshTools)memberTools?.modeChanged();
   }
   function renderItemPicker(){
     const panel=$('#item-member-picker');if(!panel)return;
     panel.hidden=!assignmentMember||splitType!=='items';if(panel.hidden)return;
     const rows=readItemDrafts();
-    panel.innerHTML=`<fieldset><legend>${t('{name}参与哪些项目？',{name:escape(memberName(assignmentMember))})}</legend>${rows.map((row,i)=>`<label class="item-assignment-choice"><input type="checkbox" data-assign-item="${i}" ${row.memberIds.includes(assignmentMember)?'checked':''}><span>${escape(row.title)||t('项目 {number}',{number:i+1})}</span><span>${escape(row.amount||'0.00')} ${escape(s.ledger.currency)}</span></label>`).join('')}</fieldset><p id="item-assignment-result" class="form-hint" role="status"></p><div class="item-assignment-actions"><button type="button" class="button secondary" id="item-assignment-done">${t('完成选择')}</button><button type="button" class="text-link" id="item-assignment-skip">${t('暂不分摊')}</button></div>`;
+    panel.innerHTML=`<fieldset><legend>${t('{name}参与哪些条目？',{name:escape(memberName(assignmentMember))})}</legend>${rows.map((row,i)=>`<label class="item-assignment-choice"><input type="checkbox" data-assign-item="${i}" ${row.memberIds.includes(assignmentMember)?'checked':''}><span>${escape(row.title)||t('条目 {number}',{number:i+1})}</span><span>${escape(row.amount||'0.00')} ${escape(s.ledger.currency)}</span></label>`).join('')}</fieldset><p id="item-assignment-result" class="form-hint" role="status"></p><div class="item-assignment-actions"><button type="button" class="button secondary" id="item-assignment-done">${t('完成选择')}</button><button type="button" class="text-link" id="item-assignment-skip">${t('暂不分摊')}</button></div>`;
   }
   function assignmentPending(){return splitType==='items'&&assignmentMember&&!readItemDrafts().some(row=>row.memberIds.includes(assignmentMember));}
   function showAssignment(memberId){
-    if(assignmentPending()&&assignmentMember!==memberId){$('#entry-member-error').textContent=t('请先选择参与项目，或选择暂不分摊。');$('#entry-member-error').hidden=false;return false;}
+    if(assignmentPending()&&assignmentMember!==memberId){$('#entry-member-error').textContent=t('请先选择参与条目，或选择暂不分摊。');$('#entry-member-error').hidden=false;return false;}
     assignmentMember=memberId;renderItemPicker();$('#item-member-picker input')?.focus();return true;
   }
   function updateMode(){
@@ -113,7 +116,7 @@ export function openExpenseEditor(context, options = {}) {
   if(context.onAddMember&&!recurring&&!financialLocked){
     form.querySelector('.participant-fieldset').insertAdjacentHTML('afterend',`<details class="entry-member-add"><summary>${t('添加参与人')}</summary><p class="form-hint">${t('添加到账本，可稍后邀请本人认领。')}</p><div class="inline-member-fields"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="inlineMemberName" maxlength="40" autocomplete="off"></label><button type="button" class="button secondary" id="entry-add-member">${t('添加并选择')}</button><button type="button" class="text-link" id="entry-members-done">${t('完成添加')}</button></div><p id="entry-member-feedback" class="form-hint" role="status" hidden></p><div id="entry-member-matches" class="member-matches"></div><div id="item-member-picker" class="item-member-picker" hidden></div><p class="form-error" id="entry-member-error" role="alert" hidden></p></details>`);
     const input=form.elements.inlineMemberName,button=$('#entry-add-member'),error=$('#entry-member-error');
-    $('#entry-members-done').addEventListener('click',()=>{if(assignmentPending()){error.textContent=t('请先选择参与项目，或选择暂不分摊。');error.hidden=false;return;}form.querySelector('.entry-member-add').open=false;form.querySelector('.entry-member-add summary').focus();});
+    $('#entry-members-done').addEventListener('click',()=>{if(assignmentPending()){error.textContent=t('请先选择参与条目，或选择暂不分摊。');error.hidden=false;return;}form.querySelector('.entry-member-add').open=false;form.querySelector('.entry-member-add summary').focus();});
     const matches=$('#entry-member-matches');
     function showMatches(){
       const query=input.value.trim().toLocaleLowerCase(),candidates=s.members.filter(m=>m.status!=='inactive'&&m.name.toLocaleLowerCase().includes(query));
@@ -146,12 +149,12 @@ export function openExpenseEditor(context, options = {}) {
     });
     $('#item-member-picker').addEventListener('click',event=>{
       if(!event.target.closest('#item-assignment-done,#item-assignment-skip'))return;
-      if(event.target.closest('#item-assignment-done')&&assignmentPending()){error.textContent=t('请先选择参与项目，或选择暂不分摊。');error.hidden=false;return;}
+      if(event.target.closest('#item-assignment-done')&&assignmentPending()){error.textContent=t('请先选择参与条目，或选择暂不分摊。');error.hidden=false;return;}
       assignmentMember=null;renderItemPicker();error.hidden=true;$('#form-error').hidden=true;input.focus();saveDraft();
     });
     button.addEventListener('click',async()=>{
       if(addingMember)return;
-      if(assignmentPending()){error.textContent=t('请先选择参与项目，或选择暂不分摊。');error.hidden=false;return;}
+      if(assignmentPending()){error.textContent=t('请先选择参与条目，或选择暂不分摊。');error.hidden=false;return;}
       const name=input.value.trim();error.hidden=true;
       if(!name){error.textContent=t('请填写伙伴的称呼。');error.hidden=false;input.focus();return;}
       const selected=splitType==='items'?new Set(readItemDrafts().flatMap(row=>row.memberIds)).size:form.querySelectorAll('[name="participant"]:checked').length;
@@ -162,7 +165,7 @@ export function openExpenseEditor(context, options = {}) {
         if(!form.isConnected)return;
         registerMember(m,true);itemDrafts=readItemDrafts();renderItems();
         input.value='';matches.innerHTML='';input.disabled=false;input.focus();
-        updateMode();preview();const feedback=$('#entry-member-feedback');feedback.textContent=t(splitType==='items'?'已添加{name}，请在消费项目中勾选参与。':splitType==='amount'?'已添加{name}，请填写承担金额。':splitType==='percent'?'已添加{name}，请核对比例与承担金额。':'已添加{name}，均分金额已更新。',{name:m.name});feedback.hidden=splitType==='items';if(splitType==='items'){showAssignment(m.id);preview();}await saveDraft();
+        updateMode();preview();const feedback=$('#entry-member-feedback');feedback.textContent=t(splitType==='items'?'已添加{name}，请在消费条目中勾选参与。':splitType==='amount'?'已添加{name}，请填写承担金额。':splitType==='percent'?'已添加{name}，请核对比例与承担金额。':'已添加{name}，均分金额已更新。',{name:m.name});feedback.hidden=splitType==='items';if(splitType==='items'){showAssignment(m.id);preview();}await saveDraft();
       }catch(problem){if(form.isConnected){error.textContent=errorMessage(problem);error.hidden=false;}}
       finally{addingMember=false;if(form.isConnected){button.disabled=false;input.disabled=false;saveButton.disabled=readingReceipts;button.textContent=t(splitType==='items'?'添加参与人':'添加并选择');}}
     });
@@ -206,7 +209,7 @@ export function openExpenseEditor(context, options = {}) {
   const draftValues=attribute=>Object.fromEntries([...form.querySelectorAll(`[${attribute}]`)].map(input=>[input.getAttribute(attribute),input.value]));
   function calculate() {
     if(splitType==='items') {
-      const result=itemizedShares(readItemDrafts().map(row=>({title:row.title,amountCents:parseMoney(row.amount),memberIds:row.memberIds})));
+      const result=itemizedShares(readItemDrafts().map(row=>({title:row.title,amountCents:parseMoney(row.amount),memberIds:row.memberIds,category:row.category||undefined})));
       return {amount:result.amountCents,shares:result.shares,ids:Object.keys(result.shares),items:result.items};
     }
     const data=new FormData(form),amount=parseMoney(data.get('amount')),ids=[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value);
@@ -250,7 +253,7 @@ export function openExpenseEditor(context, options = {}) {
       const rows=readItemDrafts(),count=rows.filter(row=>row.memberIds.includes(assignmentMember)).length,result=$('#item-assignment-result');
       if(result){result.textContent=t('已选 {count} 项',{count});try{result.textContent+=` · ${money(calculate().shares[assignmentMember]||0)}`;}catch{}}
       $('#item-assignment-skip').hidden=count>0;
-      $('#item-member-picker').querySelectorAll('[data-assign-item]').forEach(box=>{const row=rows[Number(box.dataset.assignItem)];if(row){box.checked=row.memberIds.includes(assignmentMember);box.nextElementSibling.textContent=row.title||t('项目 {number}',{number:Number(box.dataset.assignItem)+1});box.parentElement.lastElementChild.textContent=`${row.amount||'0.00'} ${s.ledger.currency}`;}});
+      $('#item-member-picker').querySelectorAll('[data-assign-item]').forEach(box=>{const row=rows[Number(box.dataset.assignItem)];if(row){box.checked=row.memberIds.includes(assignmentMember);box.nextElementSibling.textContent=row.title||t('条目 {number}',{number:Number(box.dataset.assignItem)+1});box.parentElement.lastElementChild.textContent=`${row.amount||'0.00'} ${s.ledger.currency}`;}});
     }
     if(splitType==='amount')amountSummary(chosen);
     try {
@@ -258,7 +261,7 @@ export function openExpenseEditor(context, options = {}) {
       if(splitType==='percent')form.querySelectorAll('[data-percent-result]').forEach(e=>{if(Object.hasOwn(shares,e.dataset.percentResult))e.textContent=money(shares[e.dataset.percentResult]);});
       const actual=consumptionShares({amountCents:amount,shares,payerMemberId:payer});
       $('#split-preview').innerHTML=`<div class="preview-list">${Object.keys(actual).map(id=>`<div class="preview-row"><span>${escape(memberName(id))}${id===payer?` <small>${t('垫付人')}</small>`:''}</span><strong>${money(actual[id])}</strong></div>`).join('')}</div>${amount-total?`<p class="form-hint">${t('未分配 {amount}，由垫付人承担。', {amount:money(amount-total)})}</p>`:''}<div class="preview-total"><span>${t('总额')}</span><strong>${money(amount)}</strong></div><p class="form-hint">${t('垫付人自付 {self}，待收回 {remaining}。', {self:money(self),remaining:money(amount-self-(editing?Object.values(initial.repaid||{}).reduce((sum,value)=>sum+value,0):0))})}</p>`;
-    }catch(error){const blankItems=splitType==='items'&&readItemDrafts().every(row=>!row.title.trim()&&!row.amount.trim());$('#split-preview').innerHTML=`<p class="form-hint">${escape(blankItems?t('填写项目和金额，选择实际参与人。'):splitType==='items'||form.elements.amount.value?errorMessage(error):t('填写金额后，就能看到每人承担多少。'))}</p>`;}
+    }catch(error){const blankItems=splitType==='items'&&readItemDrafts().every(row=>!row.title.trim()&&!row.amount.trim());$('#split-preview').innerHTML=`<p class="form-hint">${escape(blankItems?t('填写条目和金额，选择实际参与人。'):splitType==='items'||form.elements.amount.value?errorMessage(error):t('填写金额后，就能看到每人承担多少。'))}</p>`;}
   }
   if(!financialLocked){$('#percent-fields').insertAdjacentHTML('beforeend',`<button type="button" class="text-link" id="percent-reset">${t('重新均分比例')}</button>`);$('#percent-reset').addEventListener('click',()=>{percentEdited.clear();preview();saveDraft();});}
   $('#percent-fields').addEventListener('click',event=>{const button=event.target.closest('[data-percent-auto]');if(!button||financialLocked)return;percentEdited.delete(button.dataset.percentAuto);preview();saveDraft();form.querySelectorAll('[data-percent]').forEach(input=>{if(input.dataset.percent===button.dataset.percentAuto)input.focus();});});
@@ -296,11 +299,11 @@ export function openExpenseEditor(context, options = {}) {
   if(!editing&&!templateMode&&!recurring)saveButton.insertAdjacentHTML('beforebegin',`<button type="submit" class="button secondary" name="continueEntry" value="yes">${t('保存并继续记')}</button>`);
   form.addEventListener('submit',e=>submitForm(e,async data=>{
     if(addingMember)throw new Error('成员正在添加，请稍候再保存。');
-    if(assignmentPending()){form.querySelector('.entry-member-add').open=true;$('#item-member-picker input')?.focus();throw new Error('请先选择参与项目，或选择暂不分摊。');}
+    if(assignmentPending()){form.querySelector('.entry-member-add').open=true;$('#item-member-picker input')?.focus();throw new Error('请先选择参与条目，或选择暂不分摊。');}
     if(readingReceipts)throw new Error('收据正在处理，请稍候再保存。');
     if(memberTools&&!memberTools.readyToSave())return;
     const {amount,shares,items=[]}=calculate();
-    const payload={title:data.get('title').trim(),date:data.get('date')||today,amountCents:amount,payerMemberId:form.elements.payer.value,shares,items,note:data.get('note').trim(),receipts};
+    const payload={title:data.get('title').trim(),date:data.get('date')||today,amountCents:amount,payerMemberId:form.elements.payer.value,shares,items,category:data.get('category'),note:data.get('note').trim(),receipts};
     if(editing){payload.expectedVersion=initial.version||1;payload.changeReason=data.get('changeReason');payload.receipts=receipts.map(file=>file.id?{id:file.id}:file);}
     if(templateMode){payload.frequency=data.get('frequency');payload.startDate=payload.frequency==='none'?null:data.get('startDate');}
     if(recurring){payload.sourceTemplateId=initial.id;payload.sourceDate=options.occurrence.date;}
@@ -333,9 +336,9 @@ export function openExpenseEditor(context, options = {}) {
     const selected=()=>splitType==='items'?[...new Set(readItemDrafts().flatMap(row=>row.memberIds))]:[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value);
     let disabledBefore=[];
     function validateSelection(ids,replace,indexes){
-      if(assignmentPending())throw new Error('请先选择参与项目，或选择暂不分摊。');
+      if(assignmentPending())throw new Error('请先选择参与条目，或选择暂不分摊。');
       if(new Set(replace?ids:[...selected(),...ids]).size>50)throw new Error('已选 50 人，请先取消一位再选择。');
-      if(splitType==='items'&&(!indexes?.length||indexes.some(i=>!readItemDrafts()[i])))throw new Error('请至少选择一个消费项目。');
+      if(splitType==='items'&&(!indexes?.length||indexes.some(i=>!readItemDrafts()[i])))throw new Error('请至少选择一个消费条目。');
     }
     memberTools=mountParticipantTools({host:form.querySelector('.entry-member-add'),escape,members:s.members,user,owner:isOwner,recovered:recovered?.participantTools,
       items:()=>splitType==='items'?readItemDrafts():null,selected,validateSelection,busy:()=>addingMember||readingReceipts,
@@ -351,7 +354,7 @@ export function openExpenseEditor(context, options = {}) {
     });
   }
   const capture=()=>({splitType,manualAmount:splitType==='items'?manualAmount:form.elements.amount.value,assignmentMember,participantTools:memberTools?.capture(),percentEdited:[...percentEdited],amountDraftInitialized,items:readItemDrafts(),receipts,
-    fields:Object.fromEntries(['amount','title','payer','date','note','changeReason','frequency','startDate'].filter(name=>form.elements[name]).map(name=>[name,form.elements[name].value])),
+    fields:Object.fromEntries(['amount','title','category','payer','date','note','changeReason','frequency','startDate'].filter(name=>form.elements[name]).map(name=>[name,form.elements[name].value])),
     participants:[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value),
     'data-percent':draftValues('data-percent'),'data-share-amount':draftValues('data-share-amount')});
   const baseline=JSON.stringify(capture());

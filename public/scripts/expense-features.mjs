@@ -1,3 +1,4 @@
+import {categoryId} from './expense-analytics.mjs';
 import { assertCents, splitShares, validateDate } from './ledger-core.mjs';
 
 const MAX_CENTS = BigInt(Number.MAX_SAFE_INTEGER);
@@ -16,11 +17,11 @@ function safeTotal(value) {
 }
 
 export function itemizedShares(items) {
-  if (!Array.isArray(items) || items.length < 1 || items.length > 8) throw new Error('请填写 1–8 个消费项目。');
+  if (!Array.isArray(items) || items.length < 1 || items.length > 8) throw new Error('请填写 1–8 个消费条目。');
   const totals = new Map();
   let amount = 0n;
   const normalized = items.map(item => {
-    const title = nonemptyText(item?.title, 120, '项目名称不能为空，且不能超过 120 个字。');
+    const title = nonemptyText(item?.title, 120, '条目名称不能为空，且不能超过 120 个字。');
     const amountCents = assertCents(item.amountCents);
     if (!Array.isArray(item.memberIds) || !item.memberIds.length || item.memberIds.length > 50) throw new Error('每个项目请选择 1–50 位参与成员。');
     const memberIds = [...item.memberIds];
@@ -29,7 +30,7 @@ export function itemizedShares(items) {
     if (totals.size > 50) throw new Error('每笔费用最多选择 50 位分摊成员；账本成员数量不受此限制。');
     amount += BigInt(amountCents);
     safeTotal(amount);
-    return { title, amountCents, memberIds };
+    return { title, amountCents, memberIds, ...(item.category!=null&&item.category!==''?{category:categoryId(item.category)}:{}) };
   });
   return { amountCents: safeTotal(amount), shares: Object.fromEntries([...totals].map(([id, cents]) => [id, safeTotal(cents)])), items: normalized };
 }
@@ -56,7 +57,7 @@ export function validateExpenseExtras(payload) {
   if (typeof note !== 'string' || note.trim().length > 1000) throw new Error('备注不能超过 1000 个字。');
   const sourceItems = payload.items ?? [];
   const sourceReceipts = payload.receipts ?? [];
-  if (!Array.isArray(sourceItems)) throw new Error('消费项目无效。');
+  if (!Array.isArray(sourceItems)) throw new Error('消费条目无效。');
   if (!Array.isArray(sourceReceipts) || sourceReceipts.length > 3) throw new Error('每笔账单最多添加 3 份收据。');
   let items = [];
   if (sourceItems.length) {
@@ -65,11 +66,11 @@ export function validateExpenseExtras(payload) {
     if (result.amountCents !== payload.amountCents || !shares || typeof shares !== 'object' || Array.isArray(shares)
       || Object.keys(result.shares).length !== Object.keys(shares).length
       || Object.entries(result.shares).some(([id, cents]) => !Object.hasOwn(shares, id) || shares[id] !== cents)) {
-      throw new Error('项目合计或分摊金额与账单不一致，请重新核对。');
+      throw new Error('条目合计或分摊金额与账单不一致，请重新核对。');
     }
     items = result.items;
   }
-  return { note: note.trim(), items, receipts: sourceReceipts.map(receiptData) };
+  return { category:categoryId(payload.category), note: note.trim(), items, receipts: sourceReceipts.map(receiptData) };
 }
 
 export function normalizeSchedule({ frequency = 'none', startDate = null } = {}) {

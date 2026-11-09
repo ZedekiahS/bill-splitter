@@ -1,3 +1,4 @@
+import {personalData} from '../public/scripts/expense-analytics.mjs';
 import {readFile} from 'node:fs/promises';
 import {memberBalances,remainingFor} from '../public/scripts/ledger-core.mjs';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +10,7 @@ import {readImport,restoreState} from './ledger-import.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['updateProject','setAnalyticsInclusion','setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){
@@ -70,6 +71,7 @@ export function ledgerService(pool){
       await client.query('INSERT INTO bs_ledgers(id,owner_id,body) VALUES($1,$2,$3)',[ledgerId,user.uid,state]);
       await save(client,ledgerId,state);return ledgerId;
     });},
+    async personalConsumption(user){const {rows}=await pool.query('SELECT l.body FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1',[user.uid]);const snapshots=await Promise.all(rows.map(({body})=>engine(body,user).loadLedger(Object.keys(body.ledgers)[0])));return personalData(snapshots,user.uid);},
     async updates(user){const {rows}=await pool.query('SELECT l.id,l.revision::text AS revision FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.id',[user.uid]);return rows;},
     async list(user){const {rows}=await pool.query('SELECT l.id,l.body->\'ledgers\'->l.id::text AS ledger FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.updated_at DESC',[user.uid]);return rows.map(row=>({...row.ledger,id:row.id}));},
     async get(user,ledgerId){const state=await load(pool,ledgerId,user);return engine(state,user).loadLedger(ledgerId);},

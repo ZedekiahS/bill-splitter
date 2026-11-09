@@ -224,3 +224,5 @@ old group name after conflict cannot adopt a newer version; full-payment retries
 remain reachable from expense details after reload; item-only mode conversions
 keep totals and participants consistent; deleted-group updates report a conflict
 instead of a permission failure. See `docs/review/recovery-boundaries-2026-11-09.md`.
+
+- `expense-analytics.test.mjs`: project metadata, uid-based personal consumption, category inheritance and rounding, backup defaults, reporting filters/drill-down and inclusion error recovery. Real API coverage is in `api-scenarios.test.mjs`; see `docs/review/project-consumption-2026-11-09.md`.

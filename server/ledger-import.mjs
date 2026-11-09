@@ -1,3 +1,4 @@
+import {projectData} from '../public/scripts/expense-analytics.mjs';
 import yauzl from 'yauzl';
 import {randomUUID} from 'node:crypto';
 import {expenseData,text} from '../public/scripts/ledger-domain.mjs';
@@ -50,7 +51,7 @@ export function restoreState({data,files},user,{memberId,title}={}){
  const oldUid=members.find(m=>m.id===memberId).uid,actor=uid=>uid&&uid===oldUid?user.uid:uid?'imported:'+String(uid).slice(0,200):null;
  const id=randomUUID(),now=new Date().toISOString(),state={ledgers:{},members:{[id]:{}},expenses:{[id]:{}},payments:{[id]:{}},templates:{[id]:{}},occurrences:{[id]:{}},invites:{},claims:{}};
  const currency=text(data.ledger.currency,'币种',3);if(!/^[A-Z]{3}$/.test(currency))invalid();
- state.ledgers[id]={title:text(title||data.ledger.title,'账本名称'),currency,timeZone:timeZone(data.ledger.timeZone),ownerUid:user.uid,memberUids:[user.uid],createdAt:now,status:'active',lastApprovedInviteId:null,importedAt:now,importedFrom:{ledgerId:String(data.ledger.id),exportedAt:instant(data.exportedAt)}};
+ state.ledgers[id]={title:text(title||data.ledger.title,'账本名称'),currency,...projectData(data.ledger),projectVersion:1,timeZone:timeZone(data.ledger.timeZone),ownerUid:user.uid,memberUids:[user.uid],createdAt:now,status:'active',lastApprovedInviteId:null,importedAt:now,importedFrom:{ledgerId:String(data.ledger.id),exportedAt:instant(data.exportedAt)}};
  for(const m of members)state.members[id][memberMap.get(m.id)]={name:text(m.name,'成员名字',40),uid:m.id===memberId?user.uid:null,createdAt:instant(m.createdAt),createdByUid:user.uid,claimInviteId:null,status:m.id===memberId?'active':m.status==='inactive'?'inactive':'active'};
  state.participantGroups={[id]:{}};
  const groupNames=new Set();
@@ -70,7 +71,7 @@ export function restoreState({data,files},user,{memberId,title}={}){
  function version(e){
   const shares=Object.fromEntries(Object.entries(e.shares||{}).map(([key,value])=>[mapped(memberMap,key),value]));
   const items=list(e.items||[],8).map(row=>({...row,memberIds:list(row.memberIds,50).map(key=>mapped(memberMap,key))}));
-  const payload={title:e.title,date:e.date,amountCents:e.amountCents,payerMemberId:mapped(memberMap,e.payerMemberId),shares,items,note:e.note,receipts:receipts(e.receipts)};
+  const payload={title:e.title,date:e.date,amountCents:e.amountCents,payerMemberId:mapped(memberMap,e.payerMemberId),shares,items,category:e.category,note:e.note,receipts:receipts(e.receipts)};
   const activeMembers=Object.fromEntries(Object.entries(state.members[id]).map(([key,m])=>[key,{...m,status:'active'}]));
   const result=expenseData({...payload,receipts:[]},activeMembers,user.uid,now);result.receipts=payload.receipts;
   if(!['active','reversed'].includes(e.status))invalid();result.status=e.status;
@@ -114,7 +115,7 @@ export function restoreState({data,files},user,{memberId,title}={}){
  for(const template of templates){
   const record=version({...template,date:template.startDate||'2000-01-01',status:'active',repaid:{},receipts:[]});
   const schedule=normalizeSchedule(template);if(!['active','paused','archived'].includes(template.status))invalid();
-  state.templates[id][templateMap.get(template.id)]={title:record.title,amountCents:record.amountCents,payerMemberId:record.payerMemberId,shares:record.shares,items:record.items,note:record.note,...schedule,status:template.status,createdByUid:user.uid,createdAt:instant(template.createdAt),updatedAt:instant(template.updatedAt)};
+  state.templates[id][templateMap.get(template.id)]={title:record.title,amountCents:record.amountCents,payerMemberId:record.payerMemberId,shares:record.shares,items:record.items,category:record.category,note:record.note,...schedule,status:template.status,createdByUid:user.uid,createdAt:instant(template.createdAt),updatedAt:instant(template.updatedAt)};
  }
  for(const o of occurrences){const templateId=mapped(templateMap,o.templateId),date=validateDate(o.date),key=occurrenceId(templateId,date);if(!['posted','skipped'].includes(o.status)||state.occurrences[id][key])invalid();state.occurrences[id][key]={templateId,date,status:o.status,expenseId:mapped(expenseMap,o.expenseId,true),createdByUid:actor(o.createdByUid),createdAt:instant(o.createdAt)};}
  const histories=(rows,kind)=>list(rows||[]).map(row=>{

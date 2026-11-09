@@ -60,7 +60,7 @@ The user permits a new palette suitable for the use case. Future background cust
 - Expense lookup combines title/note search, member/role, inclusive dates and status. Member detail exposes paid/shared/received/repaid and gross outstanding amounts.
 - A real repayment can allocate to multiple expenses in oldest-date order. The receiver/owner confirms the displayed allocation; concurrent changes require fresh review. Reversal applies to the whole transfer. Opposite-direction debts are never silently netted.
 - Overview shows actionable local drafts, due periods and pending invitation claims only when present. Reissuing an invite revokes earlier links; declined/revoked/expired outcomes have recovery paths.
-- Joint payers, optional delegated payment entry, categories/trip summaries and OCR remain separately scoped enhancements rather than defects in the accepted three-stage repair plan.
+- Joint payers, optional delegated payment entry, netting and OCR remain separately scoped enhancements rather than defects in the accepted three-stage repair plan.
 
 - Single-expense receipt confirmation checks the displayed recipient, expense version and outstanding amount. A changed direction or balance requires explicit review while preserving amount, date and note.
 - Quick outstanding and detailed status filters use one status value. New template drafts are isolated by their source expense, separate from an empty new template.
@@ -69,3 +69,30 @@ The user permits a new palette suitable for the use case. Future background cust
 - Batch name entry reviews reusable/new identities before one atomic command. Unique active names default to reuse; ambiguous names require a choice; intentional duplicate identities are explicit. New members never gain account access. A stale name review is rejected before any new members are written.
 - Named participant groups belong to a ledger and are available across accounts/devices. Any ledger member may create a group; its creator or the ledger owner may update/delete it. Version checks prevent overwrites. Groups do not store amounts, payers or percentages, and applying one preserves existing custom numeric inputs. In item mode, a group is added only to explicitly selected items.
 - Groups are included in complete JSON/ZIP exports and restored with remapped member IDs. Inactive members remain visible but unselected when applying a group. Removing an unused member removes its group references and invalidates older group versions; financial records are unchanged.
+
+
+## Project and personal consumption
+
+- An existing ledger is the project container: general shared costs, trip, meal,
+  shared home, or personal daily. Optional activity dates and ongoing/ended state
+  describe the activity; ending never locks late expenses or repayments. Archiving
+  remains a separate owner-only read-only transition. Settings use optimistic versions.
+- Categories are optional and default to uncategorized. Item categories inherit the
+  expense category unless explicitly overridden. Templates, drafts, corrections,
+  history and CSV/JSON/ZIP restore preserve them. Category-only changes do not unlock
+  or alter financial shares or repayments.
+- Project overview distinguishes total spending, my actual consumption, upfront
+  payments and gross outstanding directions. Personal settlement statements contain
+  only my counterparties and source bills; no opposite-direction netting is performed.
+- Project reports show daily/monthly/yearly trends, categories and member consumption;
+  the global My spending view adds cross-ledger totals and project comparisons. Click
+  a chart to inspect its contributing expenses. Consumption uses effective expenses,
+  literal expense dates, and integer-cent shares, including payer remainder. Repayments
+  never create spending; reversed expenses are excluded; archived ones remain included.
+- Global identity comes from authenticated uid bindings, never names. The private
+  reporting endpoint projects only the caller's consumption, without other members'
+  shares, receipts or history. Currency totals stay separate. Restore copies default
+  to excluded; each account can save inclusion independently, including on archived
+  ledgers. Preferences synchronize across devices and cannot be set for another uid.
+- Personal daily is an ordinary self-owned ledger. One-member daily ledgers omit empty
+  shared settlement panels; members can still be added using the existing controls.
