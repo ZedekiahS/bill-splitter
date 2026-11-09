@@ -4,7 +4,7 @@ export default {
  '月度对比':'Monthly comparison','年度对比':'Yearly comparison','本期':'Current period','上一期':'Previous period','查看明细':'View details',
  '与上一期持平':'Unchanged from the previous period','比上一期多 {amount}':'{amount} more than the previous period','比上一期少 {amount}':'{amount} less than the previous period',
  '不足 0.1%':'Less than 0.1%','上一期无消费记录，暂不计算变化比例。':'No spending recorded in the previous period; a percentage change is unavailable.',
- '分类变化':'Category changes','上一期 {previous} · 本期 {current}':'Previous {previous} · Current {current}','已显示 {shown} / {count} 条':'Showing {shown} of {count}',
+ '变化最大的分类（前三项）':'Largest category changes (top 3)','上一期 {previous} · 本期 {current}':'Previous {previous} · Current {current}','已显示 {shown} / {count} 条':'Showing {shown} of {count}',
  '未分类':'Uncategorized','餐饮':'Food & drink','住宿':'Lodging','交通':'Transport','门票／娱乐':'Entertainment','购物':'Shopping','日用':'Household','其他':'Other',
  '共同开销':'Shared expenses','旅行':'Trip','聚餐':'Meal','合租':'Shared home','个人日常':'Personal daily',
  '请选择有效的消费分类。':'Choose a valid expense category.','请选择有效的账本类型。':'Choose a valid ledger type.','活动状态无效。':'Choose a valid activity status.',

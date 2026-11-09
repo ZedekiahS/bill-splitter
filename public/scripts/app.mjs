@@ -119,11 +119,11 @@ async function loadData(preferredId) {
   if(id){const url=new URL(location.href);url.searchParams.set('ledger',id);url.hash=state.view;history.replaceState(null,'',url);}
   } finally {loadingData=Math.max(0,loadingData-1);}
 }
-function syncBlocked(){return state.starting||loadingData||saving||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, [data-report-filter], [data-report-inclusion]'));}
+function syncBlocked(){return state.starting||loadingData||saving||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));}
 async function syncChanges(){
   if(!state.store||syncBlocked())return;
-  const generation=dataGeneration,store=state.store;
-  const valid=()=>generation===dataGeneration&&store===state.store&&!syncBlocked();
+  const generation=dataGeneration,store=state.store,view=state.view;
+  const valid=()=>generation===dataGeneration&&store===state.store&&view===state.view&&!syncBlocked();
   // Pending applicants have no ledger revision yet. Poll their invitation directly.
   if(params.has('invite')&&!state.inviteAccepted){
     try{
@@ -138,13 +138,18 @@ async function syncChanges(){
   const id=[oldId,params.get('ledger'),ledgers.find(row=>row.status!=='archived')?.id,ledgers[0]?.id].find(id=>ledgers.some(row=>row.id===id));
   const snapshot=id?await store.loadLedger(id):null;
   if(!valid())return;
+  // Fetch before repainting: keep the current report and any in-progress date input intact.
+  const consumptionData=state.view==='personal'?await store.personalConsumption():undefined;
+  if(!valid())return;
   const changed=Boolean(state.startupError)||JSON.stringify([state.ledgers,state.snapshot])!==JSON.stringify([ledgers,snapshot]);
   state.ledgers=ledgers;state.snapshot=snapshot;syncSignature=signature;state.startupError=null;
   if(!changed&&state.view!=='personal')return;
   if(id!==oldId){closeDialog();state.search='';state.filter='all';state.expenseFilters={memberId:'',memberRole:'any',from:'',to:'',status:'all'};state.expenseTab='records';state.showArchived=false;}
   const scrollY=window.scrollY;
+  const reportFilter=document.activeElement?.dataset?.reportFilter;
   const expandedHistory=new Set([...document.querySelectorAll("details[data-history-id][open]")].map(row=>row.dataset.historyId));
-  render();
+  render({consumptionData});
+  if(reportFilter)[...document.querySelectorAll('[data-report-filter]')].find(el=>el.dataset.reportFilter===reportFilter)?.focus({preventScroll:true});
   if($('#action-dialog').open)dialogRefresh?.();
   for(const row of document.querySelectorAll('details[data-history-id]'))row.open=expandedHistory.has(row.dataset.historyId);
   window.scrollTo({top:scrollY,behavior:'instant'});
@@ -161,7 +166,7 @@ function clearSession(){
 function startAutoSync(){
   autoSync??=createAutoSync({check:syncChanges,onUnauthorized:clearSession});autoSync.start();
 }
-function render() {
+function render({consumptionData}={}) {
   const nav = views.map(v=>`<button class="nav-item ${state.view===v.id?'active':''}" data-view="${v.id}" ${state.view===v.id?'aria-current="page"':''}>${icon(v.icon)}<span>${t(v.name)}</span></button>`).join('');
   $('#primary-nav').innerHTML=nav; $('#mobile-nav').innerHTML=nav;
   const activeLedgers=state.ledgers.filter(l=>l.status!=='archived'),archivedLedgers=state.ledgers.filter(l=>l.status==='archived');
@@ -170,13 +175,13 @@ function render() {
   $('#ledger-nav').insertAdjacentHTML('beforeend',`<button class="text-link archived-ledgers-link" data-action="archived-ledgers">${t('已归档账本')}${archivedLedgers.length?` (${archivedLedgers.length})`:''}</button>`);
   document.querySelector('.scope-control').hidden=state.view==='personal';
   document.querySelector('[data-action="ledger-options"]').hidden=state.view==='personal';
-  if(state.view==='personal'&&!state.snapshot){$('#main-content').innerHTML=consumptionShell(true);renderConsumption();return;}
+  if(state.view==='personal'&&!state.snapshot){$('#main-content').innerHTML=consumptionShell(true);renderConsumption(consumptionData);return;}
   if (!state.snapshot) {$('#main-content').innerHTML=heading(t('从第一本账开始'),t('把一次旅行，或每一天的小账，记在一起。'))+empty(t('还没有共享账本'),t('新建账本后，可以先用名字添加成员。'),`<button class="button primary" data-action="new-ledger">${t('新建账本')}</button>${!demo?`<button class="button secondary" data-action="import-ledger">${t('导入账本')}</button>`:''}`);return;}
   if (state.view!=='project-stats'&&!views.some(v=>v.id===state.view)) state.view='overview';
   $('#main-content').innerHTML=({overview:overview,expenses:expensesView,settlements:settlementsView,members:membersView,personal:()=>consumptionShell(true),'project-stats':()=>consumptionShell(false)}[state.view])();
-  $('#main-content').insertAdjacentHTML('afterbegin',archived()?`<p class="ledger-archive-status">${t('已归档 · 只读')} ${owner()?`<button class="text-link" data-action="restore-ledger">${t('恢复账本')}</button>`:''}</p>`:'');
+  $('#main-content').insertAdjacentHTML('afterbegin',state.view!=='personal'&&archived()?`<p class="ledger-archive-status">${t('已归档 · 只读')} ${owner()?`<button class="text-link" data-action="restore-ledger">${t('恢复账本')}</button>`:''}</p>`:'');
   if(state.view==='overview')renderPendingTasks();
-  if(['personal','project-stats'].includes(state.view))renderConsumption();
+  if(['personal','project-stats'].includes(state.view))renderConsumption(consumptionData);
   document.querySelector('.scope-control').hidden=state.view==='personal';
   document.querySelector('[data-action="ledger-options"]').hidden=state.view==='personal';
   if(state.view==='expenses'&&state.expenseTab==='saved-drafts')renderSavedDrafts();
@@ -185,10 +190,10 @@ function render() {
   document.querySelectorAll('[data-expense-filter]').forEach(input=>input.addEventListener('change',()=>{state.expenseFilters[input.dataset.expenseFilter]=input.value;if(input.dataset.expenseFilter==='status'){const shortcut=document.querySelector('[data-filter="open"]');shortcut?.classList.toggle('active',input.value==='open');shortcut?.setAttribute('aria-pressed',String(input.value==='open'));}updateExpenseResults();}));
 }
 function consumptionShell(personal){return heading(t(personal?'我的消费':'项目统计'),personal?t('按自己实际承担的金额，回看每一笔消费。'):escape(state.snapshot.ledger.title),personal?`<button class="button secondary" data-action="personal-ledger">${t('记日常开销')}</button>`:`<button class="button secondary" data-view="overview">${t('返回总览')}</button>`)+`<div id="consumption-report"><p role="status">${t('正在读取消费记录…')}</p></div>`;}
-async function renderConsumption(){
+async function renderConsumption(suppliedData){
  const target=$('#consumption-report'),store=state.store,snapshot=state.snapshot,isPersonal=state.view==='personal',key=isPersonal?'personal':'project';
  try{
-  const data=isPersonal?await store.personalConsumption():{projects:[snapshot.ledger],rows:consumptionRows(snapshot),mineRows:consumptionRows(snapshot,{uid:store.currentUser.uid,personal:true})};
+  const data=suppliedData??(isPersonal?await store.personalConsumption():{projects:[snapshot.ledger],rows:consumptionRows(snapshot),mineRows:consumptionRows(snapshot,{uid:store.currentUser.uid,personal:true})});
   if(!target.isConnected||state.store!==store)return;
   if(!isPersonal&&reportConfigs.project.ledger!==snapshot.ledger.id)reportConfigs.project={ledger:snapshot.ledger.id,currency:snapshot.ledger.currency};
   mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{saving++;try{await store.setAnalyticsInclusion(id,included);}finally{saving--;autoSync?.wake();}},onOpen:async row=>{
