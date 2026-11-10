@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {JSDOM} from 'jsdom';
 import {settlementGroups,repaymentPlan,paymentGroups} from '../public/scripts/settlement-plans.mjs';
-import {paymentSubmission} from '../public/scripts/payment-submission.mjs';
+import {paymentSubmission,pendingBatchPayments} from '../public/scripts/payment-submission.mjs';
 import {formatMoney,parseMoney} from '../public/scripts/ledger-core.mjs';
 import {t,registerMessages} from '../public/scripts/i18n.mjs';
 import messages from '../public/scripts/app-messages.mjs';
@@ -12,7 +12,7 @@ const code=source.slice(source.indexOf('function batchPaymentDialog('),source.in
 export function batchPaymentUI(store,snapshot){
  const dom=new JSDOM('<main></main>',{url:'http://localhost'}),document=dom.window.document,errors=[],saved=[];
  let lastSubmit;const state={store,snapshot};
- const context=vm.createContext({state,structuredClone,t,settlementGroups,repaymentPlan,paymentGroups,paymentSubmission,parseMoney,document,
+ const context=vm.createContext({state,structuredClone,t,settlementGroups,repaymentPlan,paymentGroups,paymentSubmission,pendingBatchPayments,parseMoney,document,
   mine:()=>({id:snapshot.members.find(m=>m.uid===store.currentUser.uid)?.id}),activeExpenses:()=>state.snapshot.expenses,sortedPayments:()=>state.snapshot.payments,heading:()=>'',icon:()=>'',newExpenseButton:()=>'',avatar:()=>'',balanceLabel:()=>'',empty:()=>'',
   $:s=>document.querySelector(s),escape:s=>String(s),amountText:n=>(n/100).toFixed(2),money:n=>formatMoney(n,snapshot.ledger.currency),dateText:s=>s,localDate:()=> '2026-11-10',memberName:id=>snapshot.members.find(m=>m.id===id)?.name||id,canReceive:()=>true,
   openDialog:(_,html)=>document.querySelector('main').innerHTML=html,errorSlot:()=>'<p id="form-error" hidden></p>',errorMessage:e=>e.message,

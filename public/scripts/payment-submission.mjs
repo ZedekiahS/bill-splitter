@@ -3,8 +3,25 @@ import {randomId} from './random-id.mjs';
 // A payment with an unknown result retains its original payload and request key.
 // Session storage also protects closing/reopening the dialog or reloading this tab.
 const pending=new Map();
+const storagePrefix='bill-splitter.pending-payment:';
+export function pendingBatchPayments(store,ledgerId){
+ const identities=new Set(pending.keys());
+ if(store.mode==='api')try{
+  const storage=globalThis.sessionStorage;
+  for(let i=0;i<(storage?.length||0);i++){const key=storage.key(i);if(key?.startsWith(storagePrefix))identities.add(key.slice(storagePrefix.length));}
+ }catch{/* In-memory requests remain reachable when session storage is unavailable. */}
+ const result=[];
+ for(const identity of identities)try{
+  const parts=JSON.parse(identity);if(!Array.isArray(parts)||parts.length!==6)continue;
+  const [uid,id,expenseId,from,command,to]=parts;
+  if(uid!==store.currentUser.uid||id!==ledgerId||expenseId!==null||command!=='recordPaymentBatch'||typeof from!=='string'||typeof to!=='string'||from===to)continue;
+  const attempt=paymentSubmission(store,ledgerId,undefined,from,command,to).pending,payload=attempt?.payload;
+  if(attempt?.key&&payload?.fromMemberId===from&&payload.toMemberId===to&&Array.isArray(payload.allocations)&&payload.allocations.length)result.push(structuredClone(attempt));
+ }catch{/* Ignore unrelated or malformed local entries, without deleting them. */}
+ return result;
+}
 export function paymentSubmission(store,ledgerId,expenseId,fromMemberId,command='recordPayment',toMemberId){
- const identity=JSON.stringify([store.currentUser.uid,ledgerId,expenseId,fromMemberId,...(command==='recordPayment'?[]:[command]),...(toMemberId?[toMemberId]:[])]),storageKey='bill-splitter.pending-payment:'+identity;
+ const identity=JSON.stringify([store.currentUser.uid,ledgerId,expenseId,fromMemberId,...(command==='recordPayment'?[]:[command]),...(toMemberId?[toMemberId]:[])]),storageKey=storagePrefix+identity;
  let attempt=pending.get(identity)||null;
  if(!attempt&&store.mode==='api')try{
    const saved=JSON.parse(globalThis.sessionStorage?.getItem(storageKey)||'null');

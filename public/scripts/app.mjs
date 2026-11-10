@@ -5,7 +5,7 @@ import {mountConsumption} from './consumption-view.mjs';
 import analyticsMessages from './analytics-messages.mjs';
 import {calendarDate} from './ledger-time.mjs';
 import { currentSession, createApiStore, signOut, apiRequest, uploadBackup } from './api-store.mjs';
-import {paymentSubmission} from './payment-submission.mjs';
+import {paymentSubmission,pendingBatchPayments} from './payment-submission.mjs';
 import accountMessages from './account-messages.mjs';
 import { t, getLanguage, setLanguage, translatePage, formatDate, translateError, registerMessages } from './i18n.mjs';
 import messages from './app-messages.mjs';
@@ -355,9 +355,8 @@ function draftsView(due) {
 function settlementsView() {
   const myId=mine()?.id,all=state.settlementScope==='all';
   const groups=settlementGroups(activeExpenses()).filter(g=>all||g.fromMemberId===myId||g.toMemberId===myId).sort((a,b)=>Number(b.fromMemberId===myId)-Number(a.fromMemberId===myId)),payments=paymentGroups(sortedPayments()).filter(p=>all||p.fromMemberId===myId||p.toMemberId===myId);
-  const directions=new Map([...groups,...state.snapshot.payments].map(row=>[JSON.stringify([row.fromMemberId,row.toMemberId]),row]));
-  const pendingBatches=[...directions.values()].map(row=>paymentSubmission(state.store,state.snapshot.ledger.id,undefined,row.fromMemberId,'recordPaymentBatch',row.toMemberId).pending).filter(Boolean);
-  const pendingMarkup=pendingBatches.map(({payload:p})=>`<div class="payment-record"><p>${t('上次收款结果待核实')} · ${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))} · ${money(p.amountCents)}</p><button class="button secondary" data-batch-from="${escape(p.fromMemberId)}" data-batch-to="${escape(p.toMemberId)}">${t('核实上次收款')}</button></div>`).join('');
+  const pendingBatches=pendingBatchPayments(state.store,state.snapshot.ledger.id);
+  const pendingMarkup=pendingBatches.map(({payload:p})=>`<div class="payment-record" data-pending-batch-from="${escape(p.fromMemberId)}" data-pending-batch-to="${escape(p.toMemberId)}"><p>${t('上次收款结果待核实')} · ${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))} · ${money(p.amountCents)}</p><button class="button secondary" data-batch-from="${escape(p.fromMemberId)}" data-batch-to="${escape(p.toMemberId)}">${t('核实上次收款')}</button></div>`).join('');
   return heading(t('结清一笔，轻松一分。'),t('还款记录保留在这里，来龙去脉都能查到。'),`<button class="button secondary" data-action="my-statement">${icon('share')}${t('我的结算单')}</button><button class="text-link" data-action="share">${t('分享结算单')}</button>${newExpenseButton()}`)+
     pendingMarkup+
     `<div class="settlement-scope" role="group" aria-label="${t('统计口径')}">${[['mine','我的往来'],['all','全部往来']].map(([id,label])=>`<button class="chip ${(all?id==='all':id==='mine')?'active':''}" data-settlement-scope="${id}" aria-pressed="${all?id==='all':id==='mine'}">${t(label)}</button>`).join('')}</div>`+
@@ -583,7 +582,10 @@ function batchPaymentDialog(fromMemberId,toMemberId){
       if(error.status===409||error.statusCode===409){reviewed=await store.loadLedger(ledgerId);preview();}
       throw error;
     }
-    finally{busy=false;preview();}
+    finally{
+      busy=false;preview();
+      if(!submission.pending&&state.store===store&&state.snapshot?.ledger.id===ledgerId)document.querySelectorAll('[data-pending-batch-from]').forEach(row=>{if(row.dataset.pendingBatchFrom===fromMemberId&&row.dataset.pendingBatchTo===toMemberId)row.remove();});
+    }
     await finishSave(t('已记录本次收款，剩余金额已更新。'));
   }));
 }

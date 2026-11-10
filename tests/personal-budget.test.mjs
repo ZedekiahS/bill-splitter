@@ -45,3 +45,11 @@ test('budget conflict keeps typed value until explicit reload and review',async(
  await f.click('[data-budget-edit]');f.input('[name="budgetAmount"]','1800');await f.click('#budget-form [type="submit"]');assert.equal(f.$('#budget-form [type="submit"]').disabled,true);assert.equal(f.$('[name="budgetAmount"]').value,'1800');
  f.source.budgets[0]={...f.source.budgets[0],version:2,amountCents:210000};await f.click('[data-budget-reload]');assert.equal(f.config.budgetDraft.expectedVersion,2);assert.equal(f.$('[name="budgetAmount"]').value,'1800');assert.match(f.$('#budget-form').textContent,/2100.00/);
 });
+
+test('late save result cannot regress newer budgets held by the same mounted report data',async()=>{
+ const f=fixture();let release;f.setSave(()=>new Promise(resolve=>release=resolve));
+ await f.click('[data-budget-edit]');f.input('[name="budgetAmount"]','1900');await f.click('#budget-form [type="submit"]');
+ f.source.budgets=[{month:'2026-11',currency:'CNY',amountCents:100000,version:3}];f.mount();
+ release([{month:'2026-11',currency:'CNY',amountCents:190000,version:2}]);await tick();
+ assert.equal(f.source.budgets[0].version,3);assert.equal(f.source.budgets[0].amountCents,100000);assert.equal(f.$('#budget-form'),null);assert.match(f.$('.budget-values').textContent,/1000.00/);
+});

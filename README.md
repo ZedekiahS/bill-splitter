@@ -68,6 +68,10 @@ fully settled transfers. Valid overpayment states and historical snapshots can b
 restored. Budget completion updates its current region without discarding unfinished
 report date inputs.
 
+Further verification: [pending receipt access and budget response ordering](docs/review/pending-entry-budget-order-2026-11-10.md).
+Pending receipt verification remains accessible even if its debt direction disappears.
+Late budget reads retain newer versions, including removed and zero budgets.
+
 ## Run the application
 
 The frontend now uses a self-hosted Node.js API and PostgreSQL. Normal account

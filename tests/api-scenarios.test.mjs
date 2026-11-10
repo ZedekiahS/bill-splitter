@@ -17,6 +17,7 @@ import {refundCapacity,allocateRefund} from '../public/scripts/expense-refunds.m
 import {batchPaymentUI} from './payment-ui-helper.mjs';
 import {JSDOM} from 'jsdom';
 import {openRefundEditor} from '../public/scripts/refund-entry.mjs';
+import {mountConsumption} from '../public/scripts/consumption-view.mjs';
 
 const target=new URL(process.env.TEST_DATABASE_URL||'http://missing');
 if(!['postgres:','postgresql:'].includes(target.protocol)||!['127.0.0.1','localhost'].includes(target.hostname)||!target.pathname.endsWith('_test'))throw new Error('Use a disposable loopback PostgreSQL database ending _test.');
@@ -730,6 +731,43 @@ for(const direction of ['repayment','return'])for(const fault of ['offline','los
  const s=await consistent(f),payments=s.payments.filter(p=>p.fromMemberId===from&&p.toMemberId===to&&p.type==='payment');
  assert.equal(payments.length,1);assert.equal(payments[0].amountCents,4000);
  assert.equal(remainingBetween(s.expenses[0],from,to),direction==='return'?6000:26000);
+});
+
+test('three accounts: offline batch remains reachable after merchant refund reversal erases the direction',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000)]);
+ for(const member of [f.b,f.c])await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:member,amountCents:30000}]);
+ const refund=await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,30000)]),originalFetch=globalThis.fetch,calls=[];let fail=true,ui;
+ const clientFetch=async(path,options={})=>{
+  if(options.method==='POST'){calls.push({body:options.body,key:options.headers['Idempotency-Key']});if(fail){fail=false;throw TypeError('offline before send');}}
+  return originalFetch(new URL(path,base),{...options,headers:{...options.headers,cookie:bob.cookie,origin}});
+ };
+ try{
+  globalThis.fetch=clientFetch;const store=createApiStore(bob);ui=batchPaymentUI(store,await store.loadLedger(f.id));ui.open('owner',f.b);ui.input('amount','40');await ui.submit();
+  globalThis.fetch=originalFetch;let s=await consistent(f);await command(alice,f.id,'reverseRefund',[bill,{refundId:refund,expectedVersion:s.expenses[0].version,reason:'Incorrect merchant refund'}]);s=await consistent(f);
+  assert.equal(remainingBetween(s.expenses[0],'owner',f.b),0);assert.equal(s.payments.filter(p=>p.fromMemberId==='owner').length,0);
+  ui.dom.window.close();globalThis.fetch=clientFetch;ui=batchPaymentUI(createApiStore(bob),s);assert.match(ui.settlements(),/核实上次收款/);ui.open('owner',f.b);assert.equal(ui.$('[name="amount"]').value,'40.00');await ui.submit();
+  assert.deepEqual(calls[0],calls[1]);assert.equal(ui.errors.at(-1).status,409);assert.doesNotMatch(ui.settlements(),/核实上次收款/);
+ }finally{globalThis.fetch=originalFetch;ui?.dom.window.close();}
+ const s=await consistent(f);assert.equal(s.payments.length,2);assert.equal(s.expenses[0].returned?.[f.b]||0,0);assert.deepEqual(expenseDebts(s.expenses[0]),[]);
+});
+
+for(const amount of [100000,null,0])test(`budget old real API response cannot replace newer session version ${amount} or erase date input`,async()=>{
+ const user=await register('Budget response test'),session=await login(user),id=await ledger(user);
+ await command(user,id,'addExpense',[expense('owner',{owner:1000},1000,{date:'2026-11-09'})]);
+ const otherBefore=await good(bob,'GET','/api/personal-consumption'),dom=new JSDOM('<main></main>',{url:'http://localhost'});dom.window.HTMLElement.prototype.scrollIntoView=()=>{};
+ const config={},root=dom.window.document.querySelector('main');let release,signal,writes=0;const committed=new Promise(resolve=>signal=resolve);
+ const save=async(payload,key)=>{
+  writes++;await good(user,'POST','/api/personal-budget',payload,key);const old=await good(user,'GET','/api/personal-consumption');signal();return new Promise(resolve=>release=()=>resolve(old.budgets));
+ };
+ const mount=data=>mountConsumption(root,{data,config,personal:true,today:'2026-11-10',onSaveBudget:save,onOpen:()=>{},onReloadBudgets:async()=>(await good(user,'GET','/api/personal-consumption')).budgets});
+ try{
+  mount(await good(user,'GET','/api/personal-consumption'));root.querySelector('[data-budget-edit]').click();const input=root.querySelector('[name="budgetAmount"]');input.value='2000';input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));root.querySelector('#budget-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await committed;
+  await good(session,'POST','/api/personal-budget',{month:'2026-11',currency:'CNY',amountCents:amount,expectedVersion:1});root.innerHTML='';mount(await good(user,'GET','/api/personal-consumption'));
+  const period=root.querySelector('[data-report-filter="period"]');period.value='custom';period.onchange();const date=root.querySelector('[data-report-filter="from"]');date.focus();date.value='2026-10-01';date.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  const displayed=root.querySelector('.budget-values')?.textContent||'unset';release();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(root.querySelector('.budget-values')?.textContent||'unset',displayed);assert.equal(root.querySelector('#budget-form'),null);assert.equal(root.querySelector('[data-report-filter="from"]'),date);assert.equal(date.value,'2026-10-01');assert.equal(dom.window.document.activeElement,date);assert.equal(date.dataset.editing,'true');assert.equal(writes,1);
+  const report=await good(session,'GET','/api/personal-consumption');assert.equal(report.budgets[0].version,2);assert.equal(report.budgets[0].amountCents,amount);assert.deepEqual((await good(bob,'GET','/api/personal-consumption')).budgets,otherBefore.budgets);
+ }finally{dom.window.close();}
 });
 
 test('three-account refund/return reversals restore JSON and streaming ZIP with overpaid history intact',async()=>{

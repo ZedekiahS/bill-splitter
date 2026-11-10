@@ -1,6 +1,6 @@
 import {t,translateError,registerMessages} from './i18n.mjs';
 import {parseMoney,formatMoney} from './ledger-core.mjs';
-import {budgetSummary} from './personal-budget.mjs';
+import {budgetSummary,mergeBudgetVersions} from './personal-budget.mjs';
 import {randomId} from './random-id.mjs';
 import messages from './budget-messages.mjs';
 registerMessages(messages);
@@ -38,7 +38,7 @@ export function mountBudget(target,{data,config,today,currency,onSave,onReload,o
       try{
         if(!config.budgetAttempt)config.budgetAttempt={key:randomId(),payload:{month:draft.month,currency:draft.currency,amountCents:remove?null:parseMoney(draft.amount,{allowZero:true}),expectedVersion:draft.expectedVersion}};
         config.budgetBusy=true;render();
-        data.budgets=budgets=await onSave(config.budgetAttempt.payload,config.budgetAttempt.key);
+        budgets=await onSave(config.budgetAttempt.payload,config.budgetAttempt.key);data.budgets=mergeBudgetVersions(data.budgets,budgets);
         delete config.budgetDraft;delete config.budgetAttempt;delete config.budgetError;delete config.budgetConflict;
       }catch(error){
         const status=error.status||error.statusCode;
@@ -52,7 +52,7 @@ export function mountBudget(target,{data,config,today,currency,onSave,onReload,o
     target.querySelector('[data-budget-reload]')?.addEventListener('click',async()=>{
       let budgets;
       config.budgetBusy=true;render();try{
-        data.budgets=budgets=await onReload();const fresh=data.budgets.find(b=>b.month===draft.month&&b.currency===draft.currency);
+        budgets=await onReload();data.budgets=mergeBudgetVersions(data.budgets,budgets);const fresh=data.budgets.find(b=>b.month===draft.month&&b.currency===draft.currency);
         draft.expectedVersion=fresh?.version||0;draft.hadBudget=fresh?.amountCents!=null;
         config.budgetConflict=false;config.budgetError=t('最新预算：{amount}。你的输入已保留，请核对后保存。',{amount:fresh?.amountCents==null?t('未设置'):formatMoney(fresh.amountCents,draft.currency)});
       }catch(error){config.budgetError=translateError(error);}finally{config.budgetBusy=false;if(budgetViews.has(config))budgetViews.get(config)(budgets);else render();onSettled();}

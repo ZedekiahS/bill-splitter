@@ -289,3 +289,24 @@ for(const outcome of ['success','failure'])for(const path of ['category','curren
   }else{assert.equal(f.root.querySelector('#budget-form [type="submit"]').disabled,false);assert.match(f.root.querySelector('#budget-form').textContent,/核实预算保存/);assert.equal(f.root.querySelector('[name="budgetAmount"]').value,'2000');}
  }finally{scheduler.stop();f.dom.window.close();}
 });
+
+for(const amount of [100000,null,0])for(const editing of [false,true])test(`late budget read cannot replace version 2 (${amount}) after return; date editing=${editing}`,async()=>{
+ const f=await fixture(),scheduler=scheduledSync(f);try{
+  const oldRead=deferred(),original=f.context.store.personalConsumption;let reads=0,writes=0;
+  const newer=[{month:'2026-11',currency:'CNY',amountCents:amount,version:2},{month:'2026-10',currency:'USD',amountCents:50000,version:3}];
+  f.context.store.savePersonalBudget=async()=>{writes++;};
+  f.context.store.personalConsumption=async()=>{reads++;return reads===1?oldRead.promise:{...await original(),budgets:structuredClone(newer)};};
+  f.root.querySelector('[data-budget-edit]').click();const input=f.root.querySelector('[name="budgetAmount"]');input.value='2000';input.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  f.root.querySelector('#budget-form').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+  let date;
+  if(editing){const period=f.root.querySelector('[data-report-filter="period"]');period.value='custom';period.onchange();date=f.root.querySelector('[data-report-filter="from"]');date.focus();date.value='2026-10-01';date.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));f.dom.window.scrollY=420;}
+  const display=()=>f.root.querySelector('.budget-values')?.textContent||'unset',before=display();
+  oldRead.resolve({...await original(),budgets:[{month:'2026-11',currency:'CNY',amountCents:200000,version:1}]});await tick();await tick();
+  assert.equal(display(),before,'older read must not change the newer budget even before sync');assert.equal(f.root.querySelector('#budget-form'),null);assert.equal(writes,1);
+  for(let i=0;i<3;i++)await scheduler.poll();assert.equal(display(),before);
+  if(date){assert.equal(f.root.querySelector('[data-report-filter="from"]'),date);assert.equal(date.value,'2026-10-01');assert.equal(f.root.activeElement,date);assert.equal(date.dataset.editing,'true');assert.equal(f.dom.window.scrollY,420);date.onchange();await scheduler.poll();}
+  f.root.querySelector('[data-budget-edit]').click();assert.equal(vm.runInContext('reportConfigs.personal.budgetDraft.expectedVersion',f.context),2);
+  f.root.querySelector('[data-budget-cancel]').click();const currency=f.root.querySelector('[data-report-filter="currency"]');currency.value='USD';currency.onchange();const month=f.root.querySelector('[data-budget-month]');month.value='2026-10';month.onchange();assert.match(display(),/500.00/,'an old response omitting a newer month/currency must not remove it');
+ }finally{scheduler.stop();f.dom.window.close();}
+});

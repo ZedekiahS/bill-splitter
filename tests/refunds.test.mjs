@@ -39,6 +39,21 @@ for(const amount of [4000,10000])test(`batch return response loss and reopen kee
  }finally{ui.dom.window.close();}
 });
 
+test('pending batch remains reachable after another account removes the debt before any transfer exists',async()=>{
+ const f=await fixture();await f.pay(f.bid,'owner',30000);await f.pay(f.cid,'owner',30000);const refund=await f.refund(30000),calls=[];let offline=true;
+ const store={...f.b,mode:'api',currentUser:{uid:crypto.randomUUID()},saveDraftCommand:async(lid,command,args,key)=>{calls.push({key,payload:structuredClone(args[0])});if(offline){offline=false;throw TypeError('offline before send');}try{return await f.b[command](lid,args[0]);}catch(e){e.status=e.statusCode;throw e;}}};
+ const ui=batchPaymentUI(store,await f.snapshot());try{
+  ui.open('owner',f.bid);ui.input('amount','40');await ui.submit();
+  await f.a.reverseRefund(f.ledger,f.id,{refundId:refund,expectedVersion:(await f.expense()).version,reason:'Incorrect refund'});
+  ui.state.snapshot=await f.snapshot();assert.equal(remainingBetween(ui.state.snapshot.expenses[0],'owner',f.bid),0);assert.equal(ui.state.snapshot.payments.filter(p=>p.fromMemberId==='owner').length,0);
+  assert.match(ui.settlements(),/核实上次收款/,'pending requests must be listed independently of live debts and transfers');
+  ui.$('main').insertAdjacentHTML('beforebegin',`<aside>${ui.settlements()}</aside>`);
+  ui.open('owner',f.bid);assert.equal(ui.$('[name="amount"]').value,'40.00');await ui.submit();assert.deepEqual(calls[0],calls[1]);assert.equal(ui.errors.at(-1).status,409);
+  assert.equal(ui.$('aside [data-batch-from]'),null,'the visible recovery entry must disappear after a definitive conflict');
+  assert.doesNotMatch(ui.settlements(),/核实上次收款/);assert.equal((await f.snapshot()).payments.length,2);
+ }finally{ui.dom.window.close();}
+});
+
 test('overpayment after refund and return reversals survives JSON, ZIP and historical snapshots',async()=>{
  const f=await fixture();await f.pay(f.bid,'owner',30000);const rid=await f.refund(10000,{[f.bid]:10000});
  const returned=await f.pay('owner',f.bid,10000,f.b);
