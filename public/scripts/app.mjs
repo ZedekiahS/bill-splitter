@@ -35,6 +35,7 @@ const state = { store: null, ledgers: [], snapshot: null, view: location.hash.sl
 const draftStore=createDraftStore();
 let activeEditor=null,editorRequest=0;
 let dataGeneration=0,loadingData=0,saving=0,syncSignature=null,autoSync=null,dialogRefresh=null;
+let reportGeneration=0;
 const reportConfigs={personal:{},project:{}};
 const views = [{id:'overview',name:'总览',icon:'home'},{id:'expenses',name:'账单',icon:'receipt'},{id:'settlements',name:'结算',icon:'arrows'},{id:'members',name:'成员',icon:'people'},{id:'personal',name:'我的消费',icon:'chart'}];
 const paths = {
@@ -122,8 +123,8 @@ async function loadData(preferredId) {
 function syncBlocked(){return state.starting||loadingData||saving||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));}
 async function syncChanges(){
   if(!state.store||syncBlocked())return;
-  const generation=dataGeneration,store=state.store,view=state.view;
-  const valid=()=>generation===dataGeneration&&store===state.store&&view===state.view&&!syncBlocked();
+  const generation=dataGeneration,reportVersion=reportGeneration,store=state.store,view=state.view;
+  const valid=()=>generation===dataGeneration&&reportVersion===reportGeneration&&store===state.store&&view===state.view&&!syncBlocked();
   // Pending applicants have no ledger revision yet. Poll their invitation directly.
   if(params.has('invite')&&!state.inviteAccepted){
     try{
@@ -167,6 +168,8 @@ function startAutoSync(){
   autoSync??=createAutoSync({check:syncChanges,onUnauthorized:clearSession});autoSync.start();
 }
 function render({consumptionData}={}) {
+  // Returning to the same page still makes responses from its previous visit stale.
+  ++reportGeneration;
   const nav = views.map(v=>`<button class="nav-item ${state.view===v.id?'active':''}" data-view="${v.id}" ${state.view===v.id?'aria-current="page"':''}>${icon(v.icon)}<span>${t(v.name)}</span></button>`).join('');
   $('#primary-nav').innerHTML=nav; $('#mobile-nav').innerHTML=nav;
   const activeLedgers=state.ledgers.filter(l=>l.status!=='archived'),archivedLedgers=state.ledgers.filter(l=>l.status==='archived');
@@ -191,15 +194,16 @@ function render({consumptionData}={}) {
 }
 function consumptionShell(personal){return heading(t(personal?'我的消费':'项目统计'),personal?t('按自己实际承担的金额，回看每一笔消费。'):escape(state.snapshot.ledger.title),personal?`<button class="button secondary" data-action="personal-ledger">${t('记日常开销')}</button>`:`<button class="button secondary" data-view="overview">${t('返回总览')}</button>`)+`<div id="consumption-report"><p role="status">${t('正在读取消费记录…')}</p></div>`;}
 async function renderConsumption(suppliedData){
- const target=$('#consumption-report'),store=state.store,snapshot=state.snapshot,isPersonal=state.view==='personal',key=isPersonal?'personal':'project';
+ const target=$('#consumption-report'),store=state.store,snapshot=state.snapshot,isPersonal=state.view==='personal',key=isPersonal?'personal':'project',reportVersion=reportGeneration;
+ const valid=()=>target.isConnected&&state.store===store&&reportVersion===reportGeneration;
  try{
   const data=suppliedData??(isPersonal?await store.personalConsumption():{projects:[snapshot.ledger],rows:consumptionRows(snapshot),mineRows:consumptionRows(snapshot,{uid:store.currentUser.uid,personal:true})});
-  if(!target.isConnected||state.store!==store)return;
+  if(!valid())return;
   if(!isPersonal&&reportConfigs.project.ledger!==snapshot.ledger.id)reportConfigs.project={ledger:snapshot.ledger.id,currency:snapshot.ledger.currency};
-  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{saving++;try{await store.setAnalyticsInclusion(id,included);}finally{saving--;autoSync?.wake();}},onOpen:async row=>{
+  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{saving++;++reportGeneration;try{await store.setAnalyticsInclusion(id,included);}finally{++reportGeneration;saving--;autoSync?.wake();}},onOpen:async row=>{
     try{if(row.ledgerId!==state.snapshot?.ledger.id)await loadData(row.ledgerId);showExpense(row.expenseId);}catch(error){toast(errorMessage(error));}
   }});
- }catch(error){if(target.isConnected)target.innerHTML=`<p class="form-error" role="alert">${escape(errorMessage(error))}</p><button class="button secondary" data-action="refresh">${t('重试')}</button>`;}
+ }catch(error){if(valid())target.innerHTML=`<p class="form-error" role="alert">${escape(errorMessage(error))}</p><button class="button secondary" data-action="refresh">${t('重试')}</button>`;}
 }
 async function personalLedger(){
  const personal=state.ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===state.store.currentUser.uid&&l.status!=='archived');

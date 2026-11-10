@@ -23,7 +23,7 @@ async function fixture(){
  const context=vm.createContext({URL,URLSearchParams,location:w.location,history:w.history,document:w.document,window:w,registerMessages,t,translateError,formatMoney,analyticsMessages,messages:{},featureMessages:{},accountMessages:{},categories,consumptionRows,mountConsumption,translatePage(){},calendarDate:()=> '2026-11-09',createDraftStore:()=>({}),store});
  vm.runInContext(source,context);vm.runInContext("state.store=store;state.starting=false;",context);
  await vm.runInContext('loadData()',context);await tick();
- return {dom,context,snapshot,add,get reads(){return reads;},sync:()=>vm.runInContext('syncChanges()',context),root:w.document};
+ return {dom,context,snapshot,add,touch:()=>revision++,get reads(){return reads;},sync:()=>vm.runInContext('syncChanges()',context),root:w.document};
 }
 test('committed category focus allows remote updates while retaining filter, focus and reading position',async()=>{
  const f=await fixture();try{
@@ -70,5 +70,34 @@ test('date edits begun during a report fetch are not overwritten or marked as sy
   const from=f.root.querySelector('[data-report-filter="from"]');from.focus();from.value='2026-10-01';from.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
   release(await original());await pending;assert.equal(f.root.activeElement,from);assert.equal(from.value,'2026-10-01');assert.match(f.root.querySelector('.report-total strong').textContent,/10\.00/);
   f.context.store.personalConsumption=original;from.onchange();await f.sync();await tick();assert.match(f.root.querySelector('.report-total strong').textContent,/30\.00/);assert.equal(f.root.querySelector('[data-report-filter="from"]').value,'2026-10-01');
+ }finally{f.dom.window.close();}
+});
+
+test('a delayed sync report cannot undo a successfully saved inclusion choice',async()=>{
+ const f=await fixture();try{
+  const original=f.context.store.personalConsumption,oldReport=await original();let release;
+  f.context.store.setAnalyticsInclusion=async(id,included)=>{f.snapshot.ledger.analyticsInclusions={me:included};f.touch();};
+  f.context.store.personalConsumption=()=>new Promise(resolve=>{release=resolve;});
+  const pending=f.sync();await tick();
+  const toggle=f.root.querySelector('[data-report-inclusion="a"]');toggle.checked=false;await toggle.onchange();
+  assert.equal(f.root.querySelector('[data-report-inclusion="a"]').checked,false);assert.match(f.root.querySelector('.report-total strong').textContent,/0\.00/);
+  release(oldReport);await pending;
+  assert.equal(f.root.querySelector('[data-report-inclusion="a"]').checked,false,'old report must not recheck the excluded ledger');assert.match(f.root.querySelector('.report-total strong').textContent,/0\.00/);assert.equal(f.snapshot.ledger.analyticsInclusions.me,false);
+  f.context.store.personalConsumption=original;await f.sync();assert.match(f.root.querySelector('.report-total strong').textContent,/0\.00/);
+ }finally{f.dom.window.close();}
+});
+for(const navigation of ['button','hash'])test(`leaving and returning via ${navigation} rejects a delayed older sync report`,async()=>{
+ const f=await fixture();try{
+  f.snapshot.expenses[0].amountCents=3500;f.snapshot.expenses[0].shares.me=3500;
+  const original=f.context.store.personalConsumption,oldReport=await original();let release;
+  f.context.store.personalConsumption=()=>new Promise(resolve=>{release=resolve;});const pending=f.sync();await tick();
+  // Use actual navigation buttons; the project statistics page uses the same report shell.
+  const navigate=async view=>{if(navigation==='hash'){await new Promise(resolve=>{f.dom.window.addEventListener('hashchange',resolve,{once:true});f.dom.window.location.hash=view;});}else {const link=f.root.createElement('button');link.dataset.view=view;f.root.body.append(link);link.click();}await tick();};
+  await navigate('project-stats');
+  f.add('new',4000);f.context.store.personalConsumption=original;
+  await navigate('personal');
+  assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/);
+  release(oldReport);await pending;await tick();assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/,'newer report must not regress to 35');
+  await f.sync();assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/);
  }finally{f.dom.window.close();}
 });
