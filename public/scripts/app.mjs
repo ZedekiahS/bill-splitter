@@ -192,7 +192,7 @@ function render({consumptionData}={}) {
   if(state.view==='expenses'&&state.expenseTab==='records')bindExpenseSearch($('#expense-search'),value=>{state.search=value;updateExpenseResults();});
   document.querySelectorAll('[data-expense-filter]').forEach(input=>input.addEventListener('change',()=>{state.expenseFilters[input.dataset.expenseFilter]=input.value;if(input.dataset.expenseFilter==='status'){const shortcut=document.querySelector('[data-filter="open"]');shortcut?.classList.toggle('active',input.value==='open');shortcut?.setAttribute('aria-pressed',String(input.value==='open'));}updateExpenseResults();}));
 }
-function consumptionShell(personal){return heading(t(personal?'我的消费':'项目统计'),personal?t('按自己实际承担的金额，回看每一笔消费。'):escape(state.snapshot.ledger.title),personal?`<button class="button secondary" data-action="personal-ledger">${t('记日常开销')}</button>`:`<button class="button secondary" data-view="overview">${t('返回总览')}</button>`)+`<div id="consumption-report"><p role="status">${t('正在读取消费记录…')}</p></div>`;}
+function consumptionShell(personal){return heading(t(personal?'我的消费':'项目统计'),personal?t('按自己实际承担的金额，回看每一笔消费。'):escape(state.snapshot.ledger.title),personal?`<button class="button secondary" data-action="personal-ledger">${t('记日常开销')}</button>`:`<button class="button secondary" data-view="overview">${t('返回总览')}</button>`)+`<div id="consumption-report" aria-busy="true"><p role="status">${t('正在读取消费记录…')}</p></div>`;}
 async function renderConsumption(suppliedData){
  const target=$('#consumption-report'),store=state.store,snapshot=state.snapshot,isPersonal=state.view==='personal',key=isPersonal?'personal':'project',reportVersion=reportGeneration;
  const valid=()=>target.isConnected&&state.store===store&&reportVersion===reportGeneration;
@@ -200,10 +200,26 @@ async function renderConsumption(suppliedData){
   const data=suppliedData??(isPersonal?await store.personalConsumption():{projects:[snapshot.ledger],rows:consumptionRows(snapshot),mineRows:consumptionRows(snapshot,{uid:store.currentUser.uid,personal:true})});
   if(!valid())return;
   if(!isPersonal&&reportConfigs.project.ledger!==snapshot.ledger.id)reportConfigs.project={ledger:snapshot.ledger.id,currency:snapshot.ledger.currency};
-  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{saving++;++reportGeneration;try{await store.setAnalyticsInclusion(id,included);}finally{++reportGeneration;saving--;autoSync?.wake();}},onOpen:async row=>{
+  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{
+    saving++;++reportGeneration;
+    try{await store.setAnalyticsInclusion(id,included);}
+    finally{
+      saving--;
+      if(state.store===store){
+        ++reportGeneration;
+        // A return visit may be awaiting a report we just invalidated. Replace that
+        // read even on failed writes: unchanged revisions cannot wake it via polling.
+        // The original mounted view handles its own save result and inline error.
+        const currentTarget=$('#consumption-report');
+        if(state.view==='personal'&&currentTarget!==target&&currentTarget?.getAttribute('aria-busy')==='true')renderConsumption();
+      }
+      autoSync?.wake();
+    }
+  },onOpen:async row=>{
     try{if(row.ledgerId!==state.snapshot?.ledger.id)await loadData(row.ledgerId);showExpense(row.expenseId);}catch(error){toast(errorMessage(error));}
   }});
  }catch(error){if(valid())target.innerHTML=`<p class="form-error" role="alert">${escape(errorMessage(error))}</p><button class="button secondary" data-action="refresh">${t('重试')}</button>`;}
+ finally{if(valid())target.removeAttribute('aria-busy');}
 }
 async function personalLedger(){
  const personal=state.ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===state.store.currentUser.uid&&l.status!=='archived');
