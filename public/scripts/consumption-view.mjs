@@ -1,4 +1,4 @@
-import {mountBudget} from './budget-view.mjs';
+import {mountBudget,bindBudgetView} from './budget-view.mjs';
 import {t,translateError,getLanguage} from './i18n.mjs';
 import {formatMoney} from './ledger-core.mjs';
 import {categories,dateRange,summarizeConsumption,comparisonPeriods,compareConsumption,monthlyHistory,checkedSum} from './expense-analytics.mjs';
@@ -20,6 +20,13 @@ export function mountConsumption(target,{data,config,personal,today,onOpen,onInc
   if(drill?.type==='member'&&!members.some(m=>m.id===drill.key)||drill?.type==='project'&&!projects.some(p=>p.id===drill.key&&p.included)){drill=null;config.drill=null;}
   function resetDrill(){drill=null;config.drill=null;limit=50;config.limit=50;}
   function showDetails(){if(personal)config.view='history';render();target.querySelector('#report-details')?.scrollIntoView({block:'start'});target.querySelector('#report-details h2')?.focus({preventScroll:true});}
+  function renderBudget(){
+    const region=target.querySelector('#personal-budget');if(!region)return;
+    mountBudget(region,{data,config,today,currency:currency(),onSave:onSaveBudget,onReload:onReloadBudgets,onSettled:onBudgetSettled,onDetails:(month,unit)=>{
+      config.period='custom';config.from=month+'-01';config.to=month+'-'+new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();config.currency=unit;config.category='';config.ledgerId='';resetDrill();showDetails();
+    }});
+  }
+  if(personal)bindBudgetView(config,budgets=>{if(budgets)data.budgets=budgets;if(target.isConnected)renderBudget();});
   function render(){
     const included=new Set(projects.filter(p=>p.included).map(p=>p.id));
     const allRows=personal?data.rows.filter(row=>included.has(row.ledgerId)):(config.scope==='mine'?data.mineRows:data.rows);
@@ -53,9 +60,7 @@ export function mountConsumption(target,{data,config,personal,today,onOpen,onInc
         <div class="report-total"><div><span>${t(personal||config.scope==='mine'?'我的实际消费':'项目总开销')} · ${escape(currency())}</span><strong>${money(report.totalCents)}</strong></div><p>${t('{count}笔账单',{count:report.expenseCount})}${range.from||range.to?' · '+escape([range.from,range.to].filter(Boolean).join(' — ')):''}</p></div>
         ${!history?`${comparison?comparisonMarkup(comparison,periods):''}${personal&&config.period==='year'?`<h2 class="annual-title">${t('{year} 年消费回顾',{year:escape(config.year)})}</h2>`:''}${charts(report)}${personal?`<button class="button secondary report-history-link" data-history-link>${t('查看历史明细')}</button>`:''}`:''}
         ${history||!personal?`<section class="panel report-details" id="report-details"><div class="section-heading"><h2 tabindex="-1">${t(history?'历史明细':'消费明细')}</h2><button class="text-link" data-clear-drill ${drill?'':'hidden'}>${t('显示全部明细')}</button></div><div id="report-rows"></div></section>`:''}`}`;
-    if(personal&&!history)mountBudget(target.querySelector('#personal-budget'),{data,config,today,currency:currency(),onSave:onSaveBudget,onReload:onReloadBudgets,onSettled:onBudgetSettled,onDetails:(month,unit)=>{
-      config.period='custom';config.from=month+'-01';config.to=month+'-'+new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();config.currency=unit;config.category='';config.ledgerId='';resetDrill();showDetails();
-    }});
+    if(personal&&!history)renderBudget();
     if(report&&(history||!personal))renderRows(report,range,history);
     target.querySelector('.comparison-categories')?.addEventListener('toggle',event=>{config.changesOpen=event.target.open;});
     target.querySelector('.report-scope')?.addEventListener('toggle',event=>{config.scopeOpen=event.target.open;});

@@ -6,6 +6,10 @@ import messages from './budget-messages.mjs';
 registerMessages(messages);
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const decimal=value=>`${Math.floor(value/100)}.${String(value%100).padStart(2,'0')}`;
+// The current report owns the visible budget region, even after navigation or
+// a filter replaces its inner DOM while an older save is still in flight.
+const budgetViews=new WeakMap();
+export function bindBudgetView(config,refresh){budgetViews.set(config,refresh);}
 
 export function mountBudget(target,{data,config,today,currency,onSave,onReload,onDetails,onSettled=()=>{}}){
   config.budgetMonth??=today.slice(0,7);
@@ -30,26 +34,28 @@ export function mountBudget(target,{data,config,today,currency,onSave,onReload,o
     target.querySelector('[data-budget-cancel]').onclick=()=>{delete config.budgetDraft;delete config.budgetError;delete config.budgetConflict;render();};
     async function save(remove=false){
       if(config.budgetBusy||config.budgetConflict)return;
+      let budgets;
       try{
         if(!config.budgetAttempt)config.budgetAttempt={key:randomId(),payload:{month:draft.month,currency:draft.currency,amountCents:remove?null:parseMoney(draft.amount,{allowZero:true}),expectedVersion:draft.expectedVersion}};
         config.budgetBusy=true;render();
-        data.budgets=await onSave(config.budgetAttempt.payload,config.budgetAttempt.key);
+        data.budgets=budgets=await onSave(config.budgetAttempt.payload,config.budgetAttempt.key);
         delete config.budgetDraft;delete config.budgetAttempt;delete config.budgetError;delete config.budgetConflict;
       }catch(error){
         const status=error.status||error.statusCode;
         if(status&&status<500&&![401,403,408,429].includes(status))delete config.budgetAttempt;
         config.budgetConflict=status===409;
         config.budgetError=config.budgetAttempt?t('预算保存结果待核实，请重试核实。'):translateError(error);
-      }finally{config.budgetBusy=false;render();onSettled();}
+      }finally{config.budgetBusy=false;if(budgetViews.has(config))budgetViews.get(config)(budgets);else render();onSettled();}
     }
     form.onsubmit=event=>{event.preventDefault();save();};
     target.querySelector('[data-budget-remove]')?.addEventListener('click',()=>save(true));
     target.querySelector('[data-budget-reload]')?.addEventListener('click',async()=>{
+      let budgets;
       config.budgetBusy=true;render();try{
-        data.budgets=await onReload();const fresh=data.budgets.find(b=>b.month===draft.month&&b.currency===draft.currency);
+        data.budgets=budgets=await onReload();const fresh=data.budgets.find(b=>b.month===draft.month&&b.currency===draft.currency);
         draft.expectedVersion=fresh?.version||0;draft.hadBudget=fresh?.amountCents!=null;
         config.budgetConflict=false;config.budgetError=t('最新预算：{amount}。你的输入已保留，请核对后保存。',{amount:fresh?.amountCents==null?t('未设置'):formatMoney(fresh.amountCents,draft.currency)});
-      }catch(error){config.budgetError=translateError(error);}finally{config.budgetBusy=false;render();onSettled();}
+      }catch(error){config.budgetError=translateError(error);}finally{config.budgetBusy=false;if(budgetViews.has(config))budgetViews.get(config)(budgets);else render();onSettled();}
     });
   }
   render();

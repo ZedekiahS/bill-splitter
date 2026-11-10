@@ -23,7 +23,7 @@ test('refund editor preserves input after conflict and refreshes recipient befor
  const f=await fixture();await f.open();f.input('[name="amount"]','20');const e=(await f.store.loadLedger(f.lid)).expenses[0];
  await f.store.updateExpense(f.lid,f.eid,{...e,title:'Updated hotel',payerMemberId:f.bid,expectedVersion:e.version,changeReason:'wrong payer'});
  await f.click('[type="submit"]');assert.equal(f.errors.at(-1).statusCode,409);assert.equal(f.$('[type="submit"]').disabled,true);
- await f.click('#refund-review');assert.equal(f.$('#refund-recipient').textContent,'Bob');assert.equal(f.$('#refund-expense-title').textContent,'Updated hotel');assert.equal(f.$('[name="amount"]').value,'20');
+ await f.click('#refund-review');assert.equal(f.$('#refund-recipient').textContent,'Bob');assert.equal(f.$('#refund-expense-title').textContent,'Updated hotel');assert.equal(f.$('[name="amount"]').value,'20.00');
  await f.click('[type="submit"]');assert.equal((await f.store.loadLedger(f.lid)).expenses[0].refunds[0].toMemberId,f.bid);
 });
 test('unknown refund outcome survives reopen and retries the original amount and key once',async()=>{
@@ -32,4 +32,17 @@ test('unknown refund outcome survives reopen and retries the original amount and
  await f.open();f.input('[name="amount"]','20');await f.click('[type="submit"]');assert.equal(f.$('[name="amount"]').readOnly,true);assert.equal(f.saved.length,0);
  await f.open();assert.equal(f.$('[name="amount"]').value,'20.00');assert.equal(f.$('[name="amount"]').readOnly,true);await f.click('[type="submit"]');
  assert.deepEqual(calls[0],calls[1]);assert.equal(f.saved.length,1);assert.equal((await f.store.loadLedger(f.lid)).expenses[0].refunds.length,1);
+});
+
+test('refund submission immediately locks fields and restores every displayed pending value',async()=>{
+ const f=await fixture();let reject;const calls=[];
+ f.setAction({...f.store,mode:'api',saveDraftCommand:async(lid,command,args,key)=>{calls.push({key,args:structuredClone(args)});if(calls.length===1){await f.store.recordRefund(lid,args[0]);return new Promise((_,no)=>reject=no);}return 'saved';}});
+ await f.open();f.input('[name="amount"]','20');f.input('[name="note"]','Original note');await f.click('[type="submit"]');
+ assert.equal(f.$('[name="amount"]').readOnly,true,'pending request must protect amount immediately');
+ assert.equal(f.$('[name="item"]').disabled,true);assert.equal(f.$('[type="submit"]').disabled,true);
+ // Even delayed input events/programmatic autofill must not change what is verified.
+ f.input('[name="amount"]','30');f.input('[name="date"]','2026-11-09');f.input('[name="note"]','Changed');f.input('[data-refund-member="owner"]','30');
+ reject(new TypeError('response lost'));await tick();
+ assert.equal(f.$('[name="amount"]').value,'20.00');assert.equal(f.$('[name="date"]').value,'2026-11-10');assert.equal(f.$('[name="note"]').value,'Original note');assert.equal(f.$('[data-refund-member="owner"]').value,'10.00');
+ await f.click('[type="submit"]');assert.deepEqual(calls[0],calls[1]);assert.equal((await f.store.loadLedger(f.lid)).expenses[0].refunds.length,1);
 });

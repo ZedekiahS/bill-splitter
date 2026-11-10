@@ -78,7 +78,9 @@ export function restoreState({data,files},user,{memberId,title}={}){
   const result=expenseData({...payload,receipts:[]},activeMembers,user.uid,now);result.receipts=payload.receipts;
   if(!['active','reversed'].includes(e.status))invalid();result.status=e.status;
   if(e.returned){result.returned=Object.fromEntries(Object.entries(e.returned).map(([key,value])=>{const member=mapped(memberMap,key);if(member===result.payerMemberId||!Object.hasOwn(originalShares(result),member))invalid();return [member,assertCents(value,true)];}));}
-  result.repaid=Object.fromEntries(Object.entries(shares).map(([key,cents])=>{const old=[...memberMap].find(([,value])=>value===key)[0],paid=assertCents(e.repaid?.[old]||0,true);if(BigInt(paid)>BigInt(cents)+BigInt(result.returned?.[key]||0)||key===result.payerMemberId&&paid||e.status==='reversed'&&paid)invalid();return [key,paid];}));
+  // Refund/transfer reversals can legitimately leave a member overpaid. Validate
+  // nonnegative totals here; reconcile both directions against the actual journal below.
+  result.repaid=Object.fromEntries(Object.keys(shares).map(key=>{const old=[...memberMap].find(([,value])=>value===key)[0],paid=assertCents(e.repaid?.[old]||0,true);if(key===result.payerMemberId&&paid||e.status==='reversed'&&paid)invalid();return [key,paid];}));
   if(e.refunds){
    const ids=new Set();result.refunds=list(e.refunds).map(r=>{
     const rid=mapped(refundMap,r.id);if(ids.has(rid)||!['active','reversed'].includes(r.status))invalid();ids.add(rid);
@@ -131,6 +133,17 @@ export function restoreState({data,files},user,{memberId,title}={}){
  }
  for(const [key,e]of Object.entries(state.expenses[id]))for(const [member,cents]of Object.entries(e.repaid))if(BigInt(cents)!==(paid.get(key+':'+member)||0n))invalid();
  for(const [key,e]of Object.entries(state.expenses[id]))for(const member of Object.keys(originalShares(e)))if(BigInt(e.returned?.[member]||0)!==(returned.get(key+':'+member)||0n))invalid();
+ // A historical snapshot may include a transfer that was later reversed, so
+ // current effective totals are not its upper bound. It must still be backed
+ // by transfers actually recorded in that direction for this expense.
+ const historicalTransfers=new Map();
+ for(const p of Object.values(state.payments[id]))if(p.type==='payment'){
+  const key=JSON.stringify([p.expenseId,p.fromMemberId,p.toMemberId]);historicalTransfers.set(key,(historicalTransfers.get(key)||0n)+BigInt(p.amountCents));
+ }
+ for(const [expenseId,e]of Object.entries(state.expenses[id]))for(const h of e.history)for(const v of [h.before,h.after].filter(Boolean)){
+  for(const [member,cents]of Object.entries(v.repaid))if(BigInt(cents)>(historicalTransfers.get(JSON.stringify([expenseId,member,v.payerMemberId]))||0n))invalid();
+  for(const [member,cents]of Object.entries(v.returned||{}))if(BigInt(cents)>(historicalTransfers.get(JSON.stringify([expenseId,v.payerMemberId,member]))||0n))invalid();
+ }
  const groups=new Map();for(const p of Object.values(state.payments[id]))if(p.batchId){
   const previous=groups.get(p.batchId);if(previous&&(['fromMemberId','toMemberId','type','date','note'].some(key=>p[key]!==previous[key])||Boolean(p.reversedBy)!==Boolean(previous.reversedBy)))invalid();groups.set(p.batchId,p);
  }

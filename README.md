@@ -62,6 +62,12 @@ migration when updating an existing installation.
 
 Verification: [monthly budget review](docs/review/monthly-budget-2026-11-10.md).
 
+Recovery follow-up: [batch receipt retries, refund backups and budget navigation](docs/review/refund-budget-recovery-2026-11-10.md).
+Batch receipts retain the same pending operation across dialog/tab reloads, including
+fully settled transfers. Valid overpayment states and historical snapshots can be
+restored. Budget completion updates its current region without discarding unfinished
+report date inputs.
+
 ## Run the application
 
 The frontend now uses a self-hosted Node.js API and PostgreSQL. Normal account

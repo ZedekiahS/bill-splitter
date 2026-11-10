@@ -14,6 +14,9 @@ import {createApiStore} from '../public/scripts/api-store.mjs';
 import {paymentSubmission} from '../public/scripts/payment-submission.mjs';
 import {expenseDebts,remainingBetween,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import {refundCapacity,allocateRefund} from '../public/scripts/expense-refunds.mjs';
+import {batchPaymentUI} from './payment-ui-helper.mjs';
+import {JSDOM} from 'jsdom';
+import {openRefundEditor} from '../public/scripts/refund-entry.mjs';
 
 const target=new URL(process.env.TEST_DATABASE_URL||'http://missing');
 if(!['postgres:','postgresql:'].includes(target.protocol)||!['127.0.0.1','localhost'].includes(target.hostname)||!target.pathname.endsWith('_test'))throw new Error('Use a disposable loopback PostgreSQL database ending _test.');
@@ -689,6 +692,81 @@ async function returnPayment(f,bill,recipient,amountCents,user){
  const e=(await snapshot(user,f.id)).expenses.find(e=>e.id===bill);
  return command(user,f.id,'recordPayment',[{expenseId:bill,fromMemberId:e.payerMemberId,toMemberId:recipient,expectedVersion:e.version,expectedRemaining:remainingBetween(e,e.payerMemberId,recipient),amountCents,date:'2026-11-10'}]);
 }
+
+for(const direction of ['repayment','return'])for(const fault of ['offline','lost-response'])test(`batch UI ${direction} ${fault}: reopen retries one original operation across three accounts`,async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000)]);
+ if(direction==='return'){
+  for(const member of [f.b,f.c])await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:member,amountCents:30000}]);
+  await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,30000)]);
+ }
+ const from=direction==='return'?'owner':f.b,to=direction==='return'?f.b:'owner',actor=direction==='return'?bob:alice;
+ const originalFetch=globalThis.fetch,calls=[];let fail=true,ui;
+ globalThis.fetch=async(path,options={})=>{
+  const isBatch=options.method==='POST'&&JSON.parse(options.body||'{}').type==='recordPaymentBatch';
+  if(isBatch){calls.push({body:options.body,key:options.headers['Idempotency-Key']});if(fail&&fault==='offline'){fail=false;throw Error('offline before send');}}
+  const response=await originalFetch(new URL(path,base),{...options,headers:{...options.headers,cookie:actor.cookie,origin}});
+  if(isBatch&&fail&&response.ok){fail=false;await response.text();throw Error('committed response lost');}return response;
+ };
+ try{
+  const store=createApiStore(actor);ui=batchPaymentUI(store,await store.loadLedger(f.id));ui.open(from,to);ui.input('amount','40.00');await ui.submit();
+  assert.equal(ui.$('[name="amount"]').readOnly,true);assert.equal(ui.saved.length,0);
+  // Another account changes this expense between the failed response and retry.
+  const latest=await store.loadLedger(f.id);globalThis.fetch=originalFetch;
+  if(direction==='return')await returnPayment(f,bill,f.c,1000,chen);
+  else await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.c,amountCents:1000}]);
+  const changed=await consistent(f),restoreFetch=async(path,options={})=>{
+   if(options.method==='POST')calls.push({body:options.body,key:options.headers['Idempotency-Key']});
+   return originalFetch(new URL(path,base),{...options,headers:{...options.headers,cookie:actor.cookie,origin}});
+  };globalThis.fetch=restoreFetch;
+  ui.dom.window.close();ui=batchPaymentUI(createApiStore(actor),changed);ui.open(from,to);assert.equal(ui.$('[name="amount"]').value,'40.00');await ui.submit();
+  assert.deepEqual(calls[0],calls[1]);
+  if(fault==='offline'){
+   // No original commit: intervening changes must cause a conflict, not silent replanning.
+   assert.equal(ui.errors.at(-1).status,409);assert.equal(ui.saved.length,0);
+   ui.input('amount','40.00');await ui.submit();assert.notEqual(calls[1].key,calls[2].key);
+  }
+  assert.equal(ui.saved.length,1);
+ }finally{globalThis.fetch=originalFetch;ui?.dom.window.close();}
+ const s=await consistent(f),payments=s.payments.filter(p=>p.fromMemberId===from&&p.toMemberId===to&&p.type==='payment');
+ assert.equal(payments.length,1);assert.equal(payments[0].amountCents,4000);
+ assert.equal(remainingBetween(s.expenses[0],from,to),direction==='return'?6000:26000);
+});
+
+test('three-account refund/return reversals restore JSON and streaming ZIP with overpaid history intact',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000)]);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.b,amountCents:30000}]);
+ const refund=await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,10000,{[f.b]:10000})]);
+ const returned=await returnPayment(f,bill,f.b,10000,bob);let s=await consistent(f);
+ await command(alice,f.id,'reverseRefund',[bill,{refundId:refund,expectedVersion:s.expenses[0].version,reason:'Incorrect merchant refund'}]);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.b,amountCents:10000}]);await command(bob,f.id,'reversePayment',[returned]);
+ for(const settled of [false,true]){
+  s=await consistent(f);if(settled){await command(alice,f.id,'updateExpense',[bill,{...s.expenses[0],note:'Confirmed overpayment',expectedVersion:s.expenses[0].version,changeReason:'Add note'}]);await returnPayment(f,bill,f.b,10000,bob);s=await consistent(f);}
+  assert.equal(remainingBetween(s.expenses[0],'owner',f.b),settled?0:10000);
+  const json={format:'json',content:ledgerExport(s).tables['ledger.json']};await good(bob,'POST','/api/ledger-import/preview',json);
+  const jsonId=await good(bob,'POST','/api/ledger-import',{...json,memberId:f.b});
+  const response=await fetch(base+`/api/ledgers/${f.id}/export`,{headers:{cookie:alice.cookie}});assert.equal(response.status,200);
+  const upload=await fetch(base+'/api/ledger-import/upload?format=zip',{method:'POST',headers:{origin,cookie:chen.cookie,'x-bill-splitter':'1','content-type':'application/octet-stream'},body:Readable.fromWeb(response.body),duplex:'half'});assert.equal(upload.status,200);const preview=await upload.json();
+  const zipId=await good(chen,'POST','/api/ledger-import/commit',{token:preview.token,memberId:f.c});
+  const balances=view=>Object.fromEntries(memberBalances(view).map(m=>[view.members.find(member=>member.id===m.memberId).name,m.balanceCents]));
+  for(const [user,id]of [[bob,jsonId],[chen,zipId]]){const copy=await snapshot(user,id);assert.deepEqual(balances(copy),balances(s));assert.equal(copy.payments.length,s.payments.length);assert.equal(copy.expenses[0].history.length,s.expenses[0].history.length);}
+ }
+});
+
+test('refund UI locks all original fields during real commit and verifies the displayed 20 exactly once',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:3000,[f.b]:3000,[f.c]:3000},9000)]),s=await snapshot(alice,f.id);
+ const dom=new JSDOM('<main></main>',{url:'http://localhost'}),originalDocument=globalThis.document,originalFetch=globalThis.fetch,calls=[];let release,ready,finished;
+ const committed=new Promise(resolve=>ready=resolve),errors=[];globalThis.document=dom.window.document;
+ globalThis.fetch=async(path,options={})=>{const response=await originalFetch(new URL(path,base),{...options,headers:{...options.headers,cookie:alice.cookie,origin}});if(options.method==='POST'){calls.push({body:options.body,key:options.headers['Idempotency-Key']});if(calls.length===1&&response.ok){await response.text();ready();await new Promise(resolve=>release=resolve);throw Error('response lost');}}return response;};
+ try{
+  openRefundEditor({store:createApiStore(alice),snapshot:s,expenseId:bill,today:'2026-11-10',openDialog:(_,html)=>document.querySelector('main').innerHTML=html,submitForm:(event,cb)=>{event.preventDefault();finished=cb().catch(e=>errors.push(e));return finished;},onSaved:()=>{}});
+  const form=document.querySelector('form'),input=(name,value)=>{form.elements[name].value=value;form.elements[name].dispatchEvent(new dom.window.Event('input',{bubbles:true}));},submit=()=>form.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  input('amount','20');input('note','Original note');submit();await committed;
+  assert.equal(form.elements.amount.readOnly,true);assert.equal(form.elements.date.readOnly,true);assert.equal(form.elements.namedItem('item').disabled,true);
+  input('amount','30');input('note','Changed');release();await finished;
+  assert.equal(form.elements.amount.value,'20.00');assert.equal(form.elements.note.value,'Original note');submit();await finished;assert.deepEqual(calls[0],calls[1]);
+ }finally{globalThis.fetch=originalFetch;if(originalDocument===undefined)delete globalThis.document;else globalThis.document=originalDocument;dom.window.close();}
+ const saved=await consistent(f);assert.equal(saved.expenses[0].refunds.length,1);assert.equal(saved.expenses[0].refunds[0].amountCents,2000);
+});
 test('three accounts reconcile a settled refund, recipient-only returns and private cross-month consumption',async()=>{
  const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000,{date:'2026-10-01',category:'lodging'})]);
  for(const member of [f.b,f.c])await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:member,amountCents:30000}]);

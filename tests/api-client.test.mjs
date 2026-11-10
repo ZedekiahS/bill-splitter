@@ -5,6 +5,22 @@ afterEach(()=>{globalThis.fetch=originalFetch;});
 const fresh=()=>import(`../public/scripts/api-store.mjs?case=${crypto.randomUUID()}`);
 const reply=(status,body)=>({ok:status>=200&&status<300,status,json:async()=>body});
 
+test('batch pending identity survives a tab reload and remains isolated by account, ledger and direction',async()=>{
+ const previous=globalThis.sessionStorage,storage=new Map(),calls=[];globalThis.sessionStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
+ const uid=crypto.randomUUID(),ledger=crypto.randomUUID(),payload={fromMemberId:'a',toMemberId:'b',amountCents:4000,date:'2026-11-10',note:'Received once',allocations:[{expenseId:'e',amountCents:4000,expectedVersion:2,expectedRemaining:10000}]};
+ const store={mode:'api',currentUser:{uid},saveDraftCommand:async(lid,command,args,key)=>{calls.push({lid,command,args,key});if(calls.length===1)throw TypeError('response lost');return 'saved';}};
+ try{
+  const first=await import(`../public/scripts/payment-submission.mjs?batch=${crypto.randomUUID()}`);
+  await assert.rejects(first.paymentSubmission(store,ledger,undefined,'a','recordPaymentBatch','b').submit(payload));
+  const fresh=await import(`../public/scripts/payment-submission.mjs?batch=${crypto.randomUUID()}`);
+  assert.equal(fresh.paymentSubmission({...store,currentUser:{uid:'other'}},ledger,undefined,'a','recordPaymentBatch','b').pending,null);
+  assert.equal(fresh.paymentSubmission(store,'other-ledger',undefined,'a','recordPaymentBatch','b').pending,null);
+  assert.equal(fresh.paymentSubmission(store,ledger,undefined,'b','recordPaymentBatch','a').pending,null);
+  const pending=fresh.paymentSubmission(store,ledger,undefined,'a','recordPaymentBatch','b');assert.deepEqual(pending.pending.payload,payload);
+  await pending.submit({...payload,amountCents:1000});assert.deepEqual(calls[0],calls[1]);assert.equal(storage.size,0);
+ }finally{if(previous===undefined)delete globalThis.sessionStorage;else globalThis.sessionStorage=previous;}
+});
+
 test('unknown payment identity survives an expired login or throttled retry',async()=>{
  const {paymentSubmission}=await import('../public/scripts/payment-submission.mjs'),calls=[];
  const statuses=[undefined,401,403,429,408];

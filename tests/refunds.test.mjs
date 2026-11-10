@@ -6,7 +6,9 @@ import {refundCapacity,allocateRefund} from '../public/scripts/expense-refunds.m
 import {consumptionRows} from '../public/scripts/expense-analytics.mjs';
 import {repaymentPlan} from '../public/scripts/settlement-plans.mjs';
 import {ledgerExport} from '../public/scripts/ledger-export.mjs';
-import {restoreState} from '../server/ledger-import.mjs';
+import {restoreState,readImport} from '../server/ledger-import.mjs';
+import {exportStream} from '../server/ledger-export.mjs';
+import {batchPaymentUI} from './payment-ui-helper.mjs';
 
 async function fixture(payload={}){
  let state={ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}};
@@ -19,6 +21,42 @@ async function fixture(payload={}){
  const refund=async(amount,benefits,extras={})=>{const e=await expense();return a.recordRefund(ledger,{expenseId:id,toMemberId:'owner',amountCents:amount,date:'2026-11-10',note:'商家退款',expectedVersion:e.version,benefits:benefits||allocateRefund(amount,refundCapacity(e).capacities),...extras});};
  return {a,b,c,bid,cid,ledger,id,snapshot,expense,pay,refund};
 }
+
+for(const amount of [4000,10000])test(`batch return response loss and reopen keeps one original ${amount} payment despite remote changes`,async()=>{
+ const f=await fixture();await f.pay(f.bid,'owner',30000);await f.pay(f.cid,'owner',30000);await f.refund(30000);
+ const calls=[],results=new Map();let lose=true;
+ const store={...f.b,mode:'api',currentUser:{uid:crypto.randomUUID()},saveDraftCommand:async(lid,command,args,key)=>{
+  calls.push({key,payload:structuredClone(args[0])});if(!results.has(key))results.set(key,await f.b[command](lid,args[0]));
+  if(lose){lose=false;throw new TypeError('response lost');}return results.get(key);
+ },recordPaymentBatch:async(lid,payload)=>{calls.push({payload:structuredClone(payload)});const result=await f.b.recordPaymentBatch(lid,payload);if(lose){lose=false;throw new TypeError('response lost');}return result;}};
+ const ui=batchPaymentUI(store,await f.snapshot());try{
+  ui.open('owner',f.bid);ui.input('amount',(amount/100).toFixed(2));await ui.submit();
+  assert.equal(ui.$('[name="amount"]').readOnly,true,'unknown result must freeze the original amount');
+  await f.pay('owner',f.cid,3000,f.c);ui.state.snapshot=await f.snapshot();assert.match(ui.settlements(),/核实上次收款/);ui.$('main').innerHTML='';ui.open('owner',f.bid);
+  assert.equal(ui.$('[name="amount"]').value,(amount/100).toFixed(2));await ui.submit();assert.deepEqual(calls[0],calls[1]);assert.equal(ui.saved.length,1);
+  const views=await Promise.all([f.a,f.b,f.c].map(s=>s.loadLedger(f.ledger)));assert.deepEqual(views[0],views[1]);assert.deepEqual(views[1],views[2]);
+  assert.equal(views[0].expenses[0].returned[f.bid],amount);assert.equal(views[0].payments.filter(p=>p.toMemberId===f.bid).length,1);
+ }finally{ui.dom.window.close();}
+});
+
+test('overpayment after refund and return reversals survives JSON, ZIP and historical snapshots',async()=>{
+ const f=await fixture();await f.pay(f.bid,'owner',30000);const rid=await f.refund(10000,{[f.bid]:10000});
+ const returned=await f.pay('owner',f.bid,10000,f.b);
+ await f.a.reverseRefund(f.ledger,f.id,{refundId:rid,expectedVersion:(await f.expense()).version,reason:'Incorrect refund'});
+ await f.pay(f.bid,'owner',10000);await f.b.reversePayment(f.ledger,returned);
+ assert.equal(remainingBetween(await f.expense(),'owner',f.bid),10000);
+ for(const settled of [false,true]){
+  if(settled){const e=await f.expense();await f.a.updateExpense(f.ledger,f.id,{...e,note:'Overpayment confirmed',expectedVersion:e.version,changeReason:'Add note'});await f.pay('owner',f.bid,10000,f.b);}
+  const original=await f.snapshot(),chunks=[];for await(const part of exportStream(original,async()=>assert.fail('no attachments')).stream)chunks.push(part);
+  for(const archive of [{data:ledgerExport(original).data,files:new Map()},await readImport({format:'zip',content:Buffer.concat(chunks).toString('base64')})]){
+   const copy=restoreState(archive,{uid:'restore',displayName:'Restore'},{memberId:'owner'}),store=createStateStore({user:{uid:'restore'},read:()=>copy.state,mutate:()=>{}}),snapshot=await store.loadLedger(copy.id);
+   assert.deepEqual(memberBalances(snapshot).map(m=>m.balanceCents),memberBalances(original).map(m=>m.balanceCents));assert.equal(snapshot.payments.length,original.payments.length);assert.equal(snapshot.expenses[0].history.length,original.expenses[0].history.length);
+   const corrupt=structuredClone(archive);corrupt.data.expenses[0].repaid[f.bid]++;
+   assert.throws(()=>restoreState(corrupt,{uid:'restore'},{memberId:'owner'}),'unmatched totals must still be rejected');
+   if(settled){const tampered=structuredClone(archive);tampered.data.expenses[0].history.find(h=>h.type==='updated').before.repaid[f.bid]++;assert.throws(()=>restoreState(tampered,{uid:'restore'},{memberId:'owner'}),'history must not invent transfers absent from the journal');}
+  }
+ }
+});
 test('settled hotel refund keeps payments and creates return obligations; recipients confirm returns',async()=>{
  const f=await fixture();await f.pay(f.bid,'owner',30000);await f.pay(f.cid,'owner',30000);
  await f.refund(30000);let e=await f.expense();

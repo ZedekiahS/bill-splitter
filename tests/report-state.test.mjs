@@ -263,3 +263,29 @@ test('budget edit blocks remote repaint until cancelled, then consumes the pendi
   f.root.querySelector('[data-budget-cancel]').click();await f.sync();await tick();assert.match(f.root.querySelector('.report-total strong').textContent,/30\.00/);
  }finally{f.dom.window.close();}
 });
+
+for(const outcome of ['success','failure'])for(const path of ['category','currency','history','roundtrip-date'])test(`budget ${outcome} updates current region after ${path} without overwriting input`,async()=>{
+ const f=await fixture(),scheduler=scheduledSync(f);try{
+  const save=deferred();let writes=0;const original=f.context.store.personalConsumption;let budgets=[];
+  f.context.store.personalConsumption=async()=>({...await original(),budgets});
+  f.context.store.savePersonalBudget=async payload=>{writes++;await save.promise;budgets=[{...payload,version:1}];};
+  f.root.querySelector('[data-budget-edit]').click();let input=f.root.querySelector('[name="budgetAmount"]');input.value='2000';input.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  f.root.querySelector('#budget-form').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  let date;
+  if(path==='roundtrip-date'){
+   await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+   const period=f.root.querySelector('[data-report-filter="period"]');period.value='custom';period.onchange();
+   date=f.root.querySelector('[data-report-filter="from"]');date.focus();date.value='2026-10-01';date.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  }else if(path==='history')f.root.querySelector('[data-report-view="history"]').click();
+  else{const select=f.root.querySelector(`[data-report-filter="${path}"]`);select.value=path==='category'?'food':'USD';select.onchange();}
+  if(outcome==='success')save.resolve();else save.reject(Error('response lost'));await tick();await tick();
+  if(path==='history')f.root.querySelector('[data-report-view="overview"]').click();
+  assert.equal(writes,1);
+  if(date){assert.equal(f.root.querySelector('[data-report-filter="from"]'),date);assert.equal(date.value,'2026-10-01');assert.equal(f.root.activeElement,date);}
+  if(outcome==='success'){
+   assert.equal(f.root.querySelector('#budget-form'),null);
+   if(path!=='currency')assert.match(f.root.querySelector('.budget-values').textContent,/2000.00/);
+   if(date)date.onchange();const before=f.reads;await scheduler.poll();assert.ok(f.reads>before,'sync must resume after successful budget save');
+  }else{assert.equal(f.root.querySelector('#budget-form [type="submit"]').disabled,false);assert.match(f.root.querySelector('#budget-form').textContent,/核实预算保存/);assert.equal(f.root.querySelector('[name="budgetAmount"]').value,'2000');}
+ }finally{scheduler.stop();f.dom.window.close();}
+});
