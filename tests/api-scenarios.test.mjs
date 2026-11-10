@@ -751,6 +751,29 @@ test('three accounts: offline batch remains reachable after merchant refund reve
  const s=await consistent(f);assert.equal(s.payments.length,2);assert.equal(s.expenses[0].returned?.[f.b]||0,0);assert.deepEqual(expenseDebts(s.expenses[0]),[]);
 });
 
+let reloadBudgetUser;
+for(const amount of [100000,null,0])test(`explicit budget reload uses current session version ${amount} for review and subsequent save`,async()=>{
+ const user=reloadBudgetUser??=await register('Budget reload test'),session=await login(user),path='/api/personal-budget',seed={month:amount===null?'2026-09':amount===0?'2026-10':'2026-08',currency:'CNY',amountCents:150000,expectedVersion:0};
+ await good(user,'POST',path,seed);const otherBefore=(await good(bob,'GET','/api/personal-consumption')).budgets;
+ const dom=new JSDOM('<main></main>',{url:'http://localhost'}),root=dom.window.document.querySelector('main'),config={budgetMonth:seed.month},writes=[];dom.window.HTMLElement.prototype.scrollIntoView=()=>{};
+ let release,ready;const reloadStarted=new Promise(resolve=>ready=resolve);
+ const reload=async()=>{const old=(await good(user,'GET','/api/personal-consumption')).budgets;ready();return new Promise(resolve=>release=()=>resolve(old));};
+ const save=async(payload,key)=>{writes.push(payload.expectedVersion);const result=await request(user,'POST',path,payload,key);if(result.status!==200)throw Object.assign(Error(result.data.error.message),{status:result.status});return (await good(user,'GET','/api/personal-consumption')).budgets;};
+ const mount=data=>mountConsumption(root,{data,config,personal:true,today:'2026-11-10',onSaveBudget:save,onReloadBudgets:reload,onOpen:()=>{}});
+ const waitFor=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('budget UI did not settle');};
+ try{
+  mount(await good(user,'GET','/api/personal-consumption'));root.querySelector('[data-budget-edit]').click();const input=root.querySelector('[name="budgetAmount"]');input.value='1800';input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  await good(session,'POST',path,{...seed,amountCents:200000,expectedVersion:1});root.querySelector('#budget-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await waitFor(()=>config.budgetConflict&&!config.budgetBusy);
+  root.querySelector('[data-budget-reload]').click();await reloadStarted;
+  await good(session,'POST',path,{...seed,amountCents:amount,expectedVersion:2});root.innerHTML='';mount(await good(user,'GET','/api/personal-consumption'));
+  const period=root.querySelector('[data-report-filter="period"]');period.value='custom';period.onchange();const date=root.querySelector('[data-report-filter="from"]');date.focus();date.value='2026-10-01';date.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  release();await waitFor(()=>!config.budgetBusy);assert.equal(config.budgetDraft.expectedVersion,3);assert.equal(config.budgetDraft.hadBudget,amount!==null);assert.equal(root.querySelector('[name="budgetAmount"]').value,'1800');
+  assert.match(root.querySelector('#budget-notice').textContent,amount===null?/未设置/:amount===0?/0.00/:/1000.00/);assert.equal(root.querySelector('#budget-error').hidden,true);assert.equal(root.querySelector('[data-report-filter="from"]'),date);assert.equal(dom.window.document.activeElement,date);assert.equal(date.value,'2026-10-01');
+  root.querySelector('#budget-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await waitFor(()=>!config.budgetBusy);assert.deepEqual(writes,[1,3]);assert.equal(root.querySelector('#budget-form'),null);
+  const result=(await good(session,'GET','/api/personal-consumption')).budgets.find(b=>b.month===seed.month);assert.equal(result.version,4);assert.equal(result.amountCents,180000);assert.deepEqual((await good(bob,'GET','/api/personal-consumption')).budgets,otherBefore);
+ }finally{dom.window.close();}
+});
+
 for(const amount of [100000,null,0])test(`budget old real API response cannot replace newer session version ${amount} or erase date input`,async()=>{
  const user=await register('Budget response test'),session=await login(user),id=await ledger(user);
  await command(user,id,'addExpense',[expense('owner',{owner:1000},1000,{date:'2026-11-09'})]);

@@ -9,6 +9,7 @@ import {mountConsumption} from '../public/scripts/consumption-view.mjs';
 import {categories,consumptionRows,personalData} from '../public/scripts/expense-analytics.mjs';
 import {formatMoney} from '../public/scripts/ledger-core.mjs';
 import {createAutoSync} from '../public/scripts/auto-sync.mjs';
+import {nextBudget} from '../public/scripts/personal-budget.mjs';
 import {t,registerMessages,translateError} from '../public/scripts/i18n.mjs';
 import analyticsMessages from '../public/scripts/analytics-messages.mjs';
 const source=(await readFile(new URL('../public/scripts/app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/start\(\);\s*$/,'');
@@ -309,4 +310,27 @@ for(const amount of [100000,null,0])for(const editing of [false,true])test(`late
   f.root.querySelector('[data-budget-edit]').click();assert.equal(vm.runInContext('reportConfigs.personal.budgetDraft.expectedVersion',f.context),2);
   f.root.querySelector('[data-budget-cancel]').click();const currency=f.root.querySelector('[data-report-filter="currency"]');currency.value='USD';currency.onchange();const month=f.root.querySelector('[data-budget-month]');month.value='2026-10';month.onchange();assert.match(display(),/500.00/,'an old response omitting a newer month/currency must not remove it');
  }finally{scheduler.stop();f.dom.window.close();}
+});
+
+for(const amount of [100000,null,0])test(`explicit reload arriving after navigation uses current budget ${amount} for both review and next write`,async()=>{
+ const f=await fixture();try{
+  const original=f.context.store.personalConsumption,delayed=deferred();let budget={month:'2026-11',currency:'CNY',amountCents:150000,version:1},hold=false;const writes=[];
+  f.context.store.personalConsumption=async()=>hold?delayed.promise:{...await original(),budgets:[structuredClone(budget)]};
+  f.context.store.savePersonalBudget=async payload=>{writes.push(structuredClone(payload));budget=nextBudget(budget,payload);};
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+  f.root.querySelector('[data-budget-edit]').click();let input=f.root.querySelector('[name="budgetAmount"]');input.value='1800';input.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  budget=nextBudget(budget,{...budget,amountCents:200000,expectedVersion:1});f.root.querySelector('#budget-form').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+  assert.ok(f.root.querySelector('[data-budget-reload]'));const old={...await original(),budgets:[structuredClone(budget)]};hold=true;
+  f.root.querySelector('[data-budget-reload]').click();await tick();
+  budget=nextBudget(budget,{...budget,amountCents:amount,expectedVersion:2});hold=false;await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+  const period=f.root.querySelector('[data-report-filter="period"]');period.value='custom';period.onchange();const date=f.root.querySelector('[data-report-filter="from"]');date.focus();date.value='2026-10-01';date.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  delayed.resolve(old);await tick();await tick();
+  assert.equal(vm.runInContext('reportConfigs.personal.budgetDraft.expectedVersion',f.context),3,'review must adopt current report version rather than old closure data');
+  assert.equal(vm.runInContext('reportConfigs.personal.budgetDraft.hadBudget',f.context),amount!==null);
+  assert.equal(f.root.querySelector('#budget-error').hidden,true);assert.equal(f.root.querySelector('#budget-notice').getAttribute('role'),'status');assert.equal(f.root.querySelector('#budget-notice').hidden,false);assert.equal(f.root.querySelector('[data-budget-reload]'),null);
+  assert.match(f.root.querySelector('#budget-form').textContent,amount===null?/最新预算：未设置/:amount===0?/最新预算：.*0.00/:/最新预算：.*1000.00/);
+  assert.equal(f.root.querySelector('[name="budgetAmount"]').value,'1800');assert.equal(f.root.querySelector('[data-report-filter="from"]'),date);assert.equal(f.root.activeElement,date);assert.equal(date.value,'2026-10-01');assert.equal(date.dataset.editing,'true');
+  f.root.querySelector('#budget-form').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+  assert.deepEqual(writes.map(p=>p.expectedVersion),[1,3]);assert.equal(budget.version,4);assert.equal(budget.amountCents,180000);assert.equal(f.root.querySelector('#budget-form'),null);
+ }finally{f.dom.window.close();}
 });

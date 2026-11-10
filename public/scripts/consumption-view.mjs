@@ -27,7 +27,10 @@ export function mountConsumption(target,{data,config,personal,today,onOpen,onInc
       config.period='custom';config.from=month+'-01';config.to=month+'-'+new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();config.currency=unit;config.category='';config.ledgerId='';resetDrill();showDetails();
     }});
   }
-  if(personal)bindBudgetView(config,budgets=>{if(budgets)data.budgets=mergeBudgetVersions(data.budgets,budgets);if(target.isConnected)renderBudget();});
+  if(personal)bindBudgetView(config,{
+    accept:budgets=>{data.budgets=mergeBudgetVersions(data.budgets,budgets);return data.budgets;},
+    refresh:()=>{if(target.isConnected)renderBudget();}
+  });
   function render(){
     const included=new Set(projects.filter(p=>p.included).map(p=>p.id));
     const allRows=personal?data.rows.filter(row=>included.has(row.ledgerId)):(config.scope==='mine'?data.mineRows:data.rows);

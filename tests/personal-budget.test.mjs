@@ -4,7 +4,7 @@ import {JSDOM} from 'jsdom';
 import {budgetData,nextBudget,budgetSummary} from '../public/scripts/personal-budget.mjs';
 import {mountConsumption} from '../public/scripts/consumption-view.mjs';
 import {createStateStore} from '../public/scripts/ledger-domain.mjs';
-import {registerMessages} from '../public/scripts/i18n.mjs';
+import {registerMessages,setLanguage,getLanguage} from '../public/scripts/i18n.mjs';
 import messages from '../public/scripts/app-messages.mjs';
 import analyticsMessages from '../public/scripts/analytics-messages.mjs';
 registerMessages(messages);registerMessages(analyticsMessages);
@@ -52,4 +52,25 @@ test('late save result cannot regress newer budgets held by the same mounted rep
  f.source.budgets=[{month:'2026-11',currency:'CNY',amountCents:100000,version:3}];f.mount();
  release([{month:'2026-11',currency:'CNY',amountCents:190000,version:2}]);await tick();
  assert.equal(f.source.budgets[0].version,3);assert.equal(f.source.budgets[0].amountCents,100000);assert.equal(f.$('#budget-form'),null);assert.match(f.$('.budget-values').textContent,/1000.00/);
+});
+
+for(const language of ['zh-CN','en'])test(`budget reload feedback distinguishes loading and errors in ${language}`,async()=>{
+ const previous=getLanguage();setLanguage(language);try{
+  let reject;const f=fixture({onReloadBudgets:()=>new Promise((_,no)=>reject=no)});f.setSave(async()=>{throw Object.assign(Error('预算已在另一设备更新，请载入最新预算后再保存。'),{status:409});});
+  await f.click('[data-budget-edit]');f.input('[name="budgetAmount"]','1800');await f.click('#budget-form [type="submit"]');await f.click('[data-budget-reload]');
+  assert.equal(f.$('#budget-form').getAttribute('aria-busy'),'true');assert.match(f.$('[data-budget-reload]').textContent,language==='en'?/Loading/:/正在读取/);assert.doesNotMatch(f.$('#budget-form [type="submit"]').textContent,/Saving|正在保存/);
+  assert.equal(f.$('[data-budget-reload]').disabled,true);assert.equal(f.$('[name="budgetAmount"]').readOnly,true);
+  reject(Error('network unavailable'));await tick();assert.equal(f.$('[data-budget-reload]').disabled,false);assert.equal(f.$('[name="budgetAmount"]').value,'1800');assert.equal(f.$('#budget-error').hidden,false);assert.equal(f.$('#budget-notice').hidden,true);assert.equal(f.$('#budget-form [type="submit"]').disabled,true);
+ }finally{setLanguage(previous);}
+});
+
+test('successful budget review notice follows language changes without losing the draft',async()=>{
+ const previous=getLanguage();setLanguage('zh-CN');try{
+  const f=fixture();f.setSave(async()=>{throw Object.assign(Error('预算已在另一设备更新，请载入最新预算后再保存。'),{status:409});});
+  await f.click('[data-budget-edit]');f.input('[name="budgetAmount"]','1800');await f.click('#budget-form [type="submit"]');
+  f.source.budgets=[{month:'2026-11',currency:'CNY',amountCents:100000,version:3}];await f.click('[data-budget-reload]');
+  assert.match(f.$('#budget-notice').textContent,/最新预算/);assert.equal(f.$('#budget-notice').getAttribute('role'),'status');assert.equal(f.$('#budget-error').hidden,true);
+  setLanguage('en');f.mount();assert.match(f.$('#budget-notice').textContent,/1000.00/);assert.doesNotMatch(f.$('#budget-notice').textContent,/最新预算/);assert.match(f.$('#budget-notice').textContent,/Latest budget/);
+  assert.equal(f.$('[name="budgetAmount"]').value,'1800');assert.equal(f.config.budgetDraft.expectedVersion,3);
+ }finally{setLanguage(previous);}
 });

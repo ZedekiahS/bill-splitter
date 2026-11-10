@@ -71,6 +71,9 @@ report date inputs.
 Further verification: [pending receipt access and budget response ordering](docs/review/pending-entry-budget-order-2026-11-10.md).
 Pending receipt verification remains accessible even if its debt direction disappears.
 Late budget reads retain newer versions, including removed and zero budgets.
+Explicit conflict reloads also use that accepted version for their review notice
+and next save, preserving the amount draft and unfinished report dates.
+See [budget reload consistency and feedback](docs/review/budget-reload-context-2026-11-10.md).
 
 ## Run the application
 
