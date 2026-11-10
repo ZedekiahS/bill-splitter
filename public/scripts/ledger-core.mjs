@@ -75,10 +75,10 @@ export function splitShares(amountCents, memberIds, { type = "equal", percentage
 
 export function remainingFor(expense, memberId) {
   if (!expense || expense.status !== "active" || memberId === expense.payerMemberId) return 0;
-  return Math.max(0, (expense.shares[memberId] || 0) - (expense.repaid[memberId] || 0));
+  return Math.max(0, memberDue(expense,memberId));
 }
 
-export function consumptionShares(expense) {
+export function originalShares(expense) {
   const amount = BigInt(assertCents(expense.amountCents));
   const shares = new Map(Object.entries(expense.shares).map(([id, cents]) => [id, assertCents(cents, true)]));
   const allocated = [...shares.values()].reduce((sum, cents) => sum + BigInt(cents), 0n);
@@ -89,6 +89,34 @@ export function consumptionShares(expense) {
   }
   return Object.fromEntries(shares);
 }
+
+export const effectiveRefunds=expense=>(expense.refunds||[]).filter(r=>r.status==='active');
+export function refundedTotal(expense){return Number(effectiveRefunds(expense).reduce((n,r)=>n+BigInt(r.amountCents),0n));}
+export const netExpenseAmount=expense=>expense.amountCents-refundedTotal(expense);
+export function expensePieces(expense){
+  const pieces=expense.items?.length?expense.items.map((item,index)=>({title:item.title,category:item.category??expense.category,itemIndex:index,shares:splitShares(item.amountCents,item.memberIds)})):[{title:expense.title,category:expense.category,itemIndex:null,shares:originalShares(expense)}];
+  for(const refund of effectiveRefunds(expense))for(const row of refund.allocations){
+    const piece=pieces.find(p=>p.itemIndex===row.itemIndex);
+    if(!piece||!Object.hasOwn(piece.shares,row.memberId)||piece.shares[row.memberId]<row.amountCents)throw new Error('退款分配超出原消费份额。');
+    piece.shares[row.memberId]-=row.amountCents;
+  }
+  return pieces.map(p=>({...p,amountCents:Number(Object.values(p.shares).reduce((n,v)=>n+BigInt(v),0n))}));
+}
+export function consumptionShares(expense){
+  if(!effectiveRefunds(expense).length)return originalShares(expense);
+  const shares=Object.fromEntries(Object.keys(originalShares(expense)).map(id=>[id,0]));
+  for(const piece of expensePieces(expense))for(const [id,cents]of Object.entries(piece.shares))shares[id]=(shares[id]||0)+cents;
+  return shares;
+}
+function memberDue(expense,id){return (consumptionShares(expense)[id]||0)-(expense.repaid?.[id]||0)+(expense.returned?.[id]||0);}
+export function expenseDebts(expense){
+  if(expense.status!=='active')return [];
+  return Object.keys(originalShares(expense)).filter(id=>id!==expense.payerMemberId).flatMap(id=>{
+    const due=memberDue(expense,id);
+    return due?[{fromMemberId:due>0?id:expense.payerMemberId,toMemberId:due>0?expense.payerMemberId:id,amountCents:Math.abs(due)}]:[];
+  });
+}
+export function remainingBetween(expense,from,to){return expenseDebts(expense).find(d=>d.fromMemberId===from&&d.toMemberId===to)?.amountCents||0;}
 
 export function memberBalances({ members, expenses, payments }) {
   const result = new Map(members.map(member => [member.id, {
@@ -102,13 +130,13 @@ export function memberBalances({ members, expenses, payments }) {
     row[field] = sum;
   }
   const active = new Set();
+  const refunds=new Map();
   for (const expense of expenses) {
     if (expense.status !== "active") continue;
     active.add(expense.id);
     add(expense.payerMemberId, "paidCents", expense.amountCents);
-    let allocated = 0;
-    for (const [id, cents] of Object.entries(expense.shares)) { add(id, "shareCents", cents); allocated += cents; }
-    add(expense.payerMemberId, "shareCents", expense.amountCents - allocated);
+    refunds.set(expense.payerMemberId,(refunds.get(expense.payerMemberId)||0n)+BigInt(refundedTotal(expense)));
+    for (const [id, cents] of Object.entries(consumptionShares(expense))) add(id, "shareCents", cents);
   }
   for (const payment of payments) {
     if (payment.type !== "payment" || payment.reversedBy || !active.has(payment.expenseId)) continue;
@@ -116,7 +144,7 @@ export function memberBalances({ members, expenses, payments }) {
     add(payment.toMemberId, "receivedCents", payment.amountCents);
   }
   for (const row of result.values()) {
-    const balance = BigInt(row.paidCents) - BigInt(row.shareCents) + BigInt(row.repaidCents) - BigInt(row.receivedCents);
+    const balance = BigInt(row.paidCents) - (refunds.get(row.memberId)||0n) - BigInt(row.shareCents) + BigInt(row.repaidCents) - BigInt(row.receivedCents);
     if (balance > BigInt(Number.MAX_SAFE_INTEGER) || balance < -BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("账本合计超出支持范围。");
     row.balanceCents = Number(balance);
   }
@@ -130,9 +158,8 @@ export function settlementText(snapshot, locale = 'zh-CN') {
   const english = locale === 'en';
   const lines = [`${ledger.title} · ${ledger.currency}`, english ? "Settlement statement (based on ledger entries; not a payment receipt)" : "待结算清单（按记账记录计算，不是转账凭证）", ""];
   for (const expense of expenses.filter(row => row.status === "active")) {
-    for (const memberId of Object.keys(expense.shares)) {
-      const left = remainingFor(expense, memberId);
-      if (left > 0) lines.push(english ? `${names.get(memberId)} → ${names.get(expense.payerMemberId)}: ${formatMoney(left, ledger.currency)} (${expense.title} · ${expense.date})` : `${names.get(memberId)} → ${names.get(expense.payerMemberId)}：${formatMoney(left, ledger.currency)}（${expense.title} · ${expense.date}）`);
+    for (const debt of expenseDebts(expense)) {
+      lines.push(english ? `${names.get(debt.fromMemberId)} → ${names.get(debt.toMemberId)}: ${formatMoney(debt.amountCents, ledger.currency)} (${expense.title} · ${expense.date})` : `${names.get(debt.fromMemberId)} → ${names.get(debt.toMemberId)}：${formatMoney(debt.amountCents, ledger.currency)}（${expense.title} · ${expense.date}）`);
     }
   }
   if (lines.length === 3) lines.push(english ? "No outstanding repayments in the current records." : "当前记录没有待确认的还款。");

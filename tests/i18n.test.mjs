@@ -1,3 +1,5 @@
+import budgetMessages from '../public/scripts/budget-messages.mjs';
+import refundMessages from '../public/scripts/refund-messages.mjs';
 import analyticsMessages from '../public/scripts/analytics-messages.mjs';
 import accountMessages from '../public/scripts/account-messages.mjs';
 import assert from 'node:assert/strict';
@@ -13,8 +15,8 @@ Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
   setItem: (key, value) => saved.set(key, value),
 } });
 const { t, registerMessages, setLanguage, getLanguage, formatDate, translateError } = await import('../public/scripts/i18n.mjs');
-registerMessages(loginMessages);
-registerMessages(featureMessages);registerMessages(analyticsMessages);
+registerMessages(loginMessages);registerMessages(budgetMessages);
+registerMessages(featureMessages);registerMessages(refundMessages);registerMessages(analyticsMessages);
 
 test('language selection persists across page loads without changing ledger data', async () => {
   assert.equal(getLanguage(), 'zh-CN');
@@ -72,7 +74,7 @@ test('all shared-ledger source messages and login labels have English translatio
   const { default: appMessages } = await import('../public/scripts/app-messages.mjs');
   registerMessages(appMessages);registerMessages(accountMessages);
   setLanguage('en');
-  const sources = await Promise.all(['consumption-view.mjs','app.mjs', 'participant-tools.mjs','participant-groups.mjs', 'expense-entry.mjs', 'expense-history-view.mjs', 'receipt-viewer.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const sources = await Promise.all(['budget-view.mjs','refund-entry.mjs','consumption-view.mjs','app.mjs', 'participant-tools.mjs','participant-groups.mjs', 'expense-entry.mjs', 'expense-history-view.mjs', 'receipt-viewer.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
   const keys = sources.flatMap(source => [...source.matchAll(/\bt\((['"])(.*?)\1/g)].map(match => match[2]));
   const login = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   keys.push(...[...login.matchAll(/data-i18n="([^"]+)"/g)].map(match => match[1]));
@@ -94,7 +96,7 @@ test('item, receipt and recurring-expense errors retain actionable English messa
     assert.doesNotMatch(translateError(new Error(source)), /[\u4e00-\u9fff]/);
   }
   assert.equal(t('移除收据 {name}', { name: '收据 {name}.pdf' }), 'Remove receipt 收据 {name}.pdf');
-  const sources = await Promise.all(['expense-analytics.mjs','expense-entry.mjs','participant-tools.mjs','participant-groups.mjs', 'expense-features.mjs', 'receipt-files.mjs', 'ledger-store.mjs', 'ledger-domain.mjs', 'api-store.mjs', 'expense-drafts.mjs', 'ledger-export.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
+  const sources = await Promise.all(['personal-budget.mjs','expense-refunds.mjs','expense-analytics.mjs','expense-entry.mjs','participant-tools.mjs','participant-groups.mjs', 'expense-features.mjs', 'receipt-files.mjs', 'ledger-store.mjs', 'ledger-domain.mjs', 'api-store.mjs', 'expense-drafts.mjs', 'ledger-export.mjs'].map(file => readFile(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8')));
   const errors = [...new Set(sources.flatMap(source => [...source.matchAll(/\bError\((['"])(.*?)\1/g)].map(match => match[2])))];
   const internal = new Set(['请明确选择 demo 或 cloud 模式。', '浏览器不支持本地演示存储。', 'Firebase 尚未配置，请使用演示模式或配置真实服务。']);
   assert.deepEqual(errors.filter(source => !internal.has(source) && /[\u4e00-\u9fff]/.test(t(source))), []);

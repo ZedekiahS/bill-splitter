@@ -1,3 +1,5 @@
+import refundMessages from '../public/scripts/refund-messages.mjs';
+import {expenseDebts,remainingBetween,refundedTotal,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import {categories} from '../public/scripts/expense-analytics.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -12,9 +14,9 @@ const source = (await readFile(new URL('../public/scripts/app.mjs', import.meta.
 function fixture(status) {
   const handlers = {}, nodes = new Map(), calls = [];
   const location = new URL('http://localhost/app.html?invite=token');
-  const context = vm.createContext({URL, URLSearchParams, location,
+  const context = vm.createContext({refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL, URLSearchParams, location,
     history:{replaceState(_state,_title,url){location.href=String(url);}},
-    document:{querySelectorAll(){return [];},querySelector(selector){if(selector.startsWith('#consumption-report'))return null;if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
+    document:{querySelectorAll(){return [];},querySelector(selector){if(selector.startsWith('#consumption-report')||selector==='#budget-form'||selector.startsWith('input[data-budget-month]'))return null;if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
     window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},analyticsMessages:{},categories,featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),
     createDraftStore:()=>({}),calls,parseMoney,formatMoney,remainingFor,consumptionShares,paymentSubmission,formatDate:s=>s,
   });
@@ -106,7 +108,7 @@ test('quick outstanding and status selection share one status condition',async()
 
 test('changed receipt direction requires acknowledgement and preserves typed payment fields',async()=>{
  const f=fixture('accepted');
- vm.runInContext(`state.snapshot={ledger:{id:'shared',currency:'CNY'},members:[{id:'old',name:'Old payer'},{id:'new',name:'New payer'},{id:'debtor',name:'Debtor'}],expenses:[{id:'bill',title:'Dinner',version:1,status:'active',payerMemberId:'old',shares:{debtor:10000},repaid:{debtor:0}}]};
+ vm.runInContext(`state.snapshot={ledger:{id:'shared',currency:'CNY'},members:[{id:'old',name:'Old payer'},{id:'new',name:'New payer'},{id:'debtor',name:'Debtor'}],expenses:[{id:'bill',title:'Dinner',amountCents:10000,version:1,status:'active',payerMemberId:'old',shares:{debtor:10000},repaid:{debtor:0}}]};
  state.store.loadLedger=async()=>({...state.snapshot,expenses:[{...state.snapshot.expenses[0],version:2,payerMemberId:'new'}]});
  state.store.recordPayment=async(_id,payload)=>{calls.push(['payment',payload]);if(payload.toMemberId==='old')throw Object.assign(Error('Changed'),{status:409});};
  openDialog=()=>{};errorSlot=()=>'';finishSave=async()=>{};

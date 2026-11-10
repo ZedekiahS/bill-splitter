@@ -1,10 +1,10 @@
-import {consumptionShares,parseMoney,splitShares} from './ledger-core.mjs';
+import {consumptionShares,originalShares,parseMoney,splitShares} from './ledger-core.mjs';
 import {itemizedShares} from './expense-features.mjs';
 
 const amountText=cents=>(cents/100).toFixed(2);
 const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
 export function expenseForm(expense){
-  const shares=consumptionShares(expense);
+  const shares=originalShares(expense);
   return {fields:{category:expense.category||'uncategorized',title:expense.title,date:expense.date,note:expense.note||'',amount:amountText(expense.amountCents),payer:expense.payerMemberId,changeReason:''},
     splitType:expense.items?.length?'items':'amount',percentEdited:[],amountDraftInitialized:true,
     participants:Object.keys(shares),'data-share-amount':Object.fromEntries(Object.entries(shares).map(([id,cents])=>[id,amountText(cents)])),'data-percent':{},
@@ -25,7 +25,7 @@ function value(form,key){
 }
 export function reconcileExpenseDraft(record,latest){
   const base=expenseForm(record.options.initial),mine=record.form,current=expenseForm(latest);
-  const locked=Object.values(latest.repaid||{}).some(amount=>amount>0);
+  const locked=latest.refunds?.length||Object.values(latest.returned||{}).some(Boolean)||Object.values(latest.repaid||{}).some(amount=>amount>0);
   const amountsOnly=form=>{const result=financial(form);if(result.items)result.items=result.items.map(({category,...item})=>item);return stable(result);};
   return ['title','date','financial','category','note','receipts'].map(key=>{
     const before=stable(value(base,key)),own=stable(value(mine,key)),remote=stable(value(current,key));

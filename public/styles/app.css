@@ -777,3 +777,22 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
  .report-total { display:block; }.report-total p { margin-top:12px; }
  .mobile-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }.mobile-nav .nav-item { min-width:0; padding-inline:2px; font-size:11px; }
 }
+
+/* Refund allocation follows the existing form and receipt rhythm. */
+.refund-benefit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 130px); gap: 16px; align-items: center; margin-block: 12px; }
+.refund-benefit small { display: block; color: var(--muted); margin-top: 4px; }
+.refund-benefit input { text-align: right; font-variant-numeric: tabular-nums; }
+#refund-preview { margin-top: 24px; }
+#refund-preview h3 { margin-block: 20px 12px; }
+
+.budget-panel { padding-block: 1.4rem; margin-block: 1rem 1.8rem; border-block: 1px solid var(--border); }
+.budget-panel .section-heading { flex-wrap: wrap; gap: 1rem; }
+.budget-panel h2 { margin: 0; }
+.budget-panel input[type="month"] { width: auto; max-width: 100%; }
+.budget-values { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; margin-block: 1.2rem; }
+.budget-values > * { display: flex; flex-direction: column; align-items: flex-start; gap: .35rem; min-width: 0; }
+.budget-values strong { font-size: clamp(1rem,2vw,1.5rem); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.budget-values span,.budget-values small { font-size: .85rem; }
+.budget-over { color: var(--danger); }
+#budget-form { max-width: 32rem; margin-block-start: 1rem; }
+#budget-form .form-actions { flex-wrap: wrap; }

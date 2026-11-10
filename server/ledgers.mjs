@@ -1,6 +1,7 @@
+import {budgetData,nextBudget} from '../public/scripts/personal-budget.mjs';
 import {personalData} from '../public/scripts/expense-analytics.mjs';
 import {readFile} from 'node:fs/promises';
-import {memberBalances,remainingFor} from '../public/scripts/ledger-core.mjs';
+import {memberBalances,remainingFor,expenseDebts,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import { randomUUID } from 'node:crypto';
 import { createStateStore } from '../public/scripts/ledger-domain.mjs';
 import { receiptBlob } from '../public/scripts/receipt-files.mjs';
@@ -10,7 +11,7 @@ import {readImport,restoreState} from './ledger-import.mjs';
 export const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 function id(value){if(!uuid(value))throw new HttpError(400,'请求内容无效，请刷新后重试。');return value;}
 function engine(state,user){return createStateStore({user,read:()=>state,mutate:fn=>fn(state,user,new Date().toISOString())});}
-const commandNames=new Set(['updateProject','setAnalyticsInclusion','setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
+const commandNames=new Set(['updateProject','setAnalyticsInclusion','setLedgerTimeZone','setMemberStatus','revokeInvite','rejectClaim','setLedgerStatus','renameMember','removeMember','addMember','addMembers','saveParticipantGroup','deleteParticipantGroup','addExpense','updateExpense','saveTemplate','setTemplateStatus','skipOccurrence','recordRefund','reverseRefund','recordPaymentBatch','reversePaymentBatch','recordPayment','reversePayment','reverseExpense','createInvite']);
 const empty=()=>({ledgers:{},members:{},expenses:{},payments:{},templates:{},occurrences:{},invites:{},claims:{}});
 
 export function ledgerService(pool){
@@ -49,16 +50,26 @@ export function ledgerService(pool){
   }
   async function write(user,key,route,body,action){return transaction(pool,client=>once(client,user,key,hash(JSON.stringify([route,body])),()=>action(client)));}
   async function inviteLedger(client,token){id(token);const {rows}=await client.query('SELECT ledger_id FROM bs_invites WHERE id=$1',[token]);if(!rows.length)throw new HttpError(404,'邀请已失效、过期或被认领。');return rows[0].ledger_id;}
+  const budgets=async(user,client=pool)=>(await client.query('SELECT month,currency,amount_cents::float8 AS "amountCents",version FROM bs_personal_budgets WHERE user_id=$1 ORDER BY month,currency',[user.uid])).rows;
   return {
+    async savePersonalBudget(user,payload,key){
+      const data=budgetData(payload);
+      return write(user,key,'personal-budget',data,async client=>{
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[user.uid+':budget:'+data.month+':'+data.currency]);
+        const current=(await budgets(user,client)).find(b=>b.month===data.month&&b.currency===data.currency),next=nextBudget(current,data);
+        await client.query('INSERT INTO bs_personal_budgets(user_id,month,currency,amount_cents,version) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,month,currency) DO UPDATE SET amount_cents=$4,version=$5',[user.uid,next.month,next.currency,next.amountCents,next.version]);
+        return next;
+      });
+    },
     async previewArchive(user,archive){
       const {id,state,attachmentCount}=restoreState(archive,user,{memberId:archive.data.members?.[0]?.id});
       const snapshot=await engine(state,user).loadLedger(id),active=snapshot.expenses.filter(e=>e.status==='active');
       const dates=snapshot.expenses.map(e=>e.date).sort(),balances=memberBalances(snapshot);
       return {title:archive.data.ledger.title,currency:archive.data.ledger.currency,members:archive.data.members.map((m,index)=>{
-        const current=snapshot.members[index],receivable=active.filter(e=>e.payerMemberId===current.id).reduce((n,e)=>n+Object.keys(e.shares).reduce((sum,key)=>sum+remainingFor(e,key),0),0);
-        const payable=active.reduce((sum,e)=>sum+remainingFor(e,current.id),0);
+        const current=snapshot.members[index],receivable=active.flatMap(expenseDebts).filter(d=>d.toMemberId===current.id).reduce((n,d)=>n+d.amountCents,0);
+        const payable=active.flatMap(expenseDebts).filter(d=>d.fromMemberId===current.id).reduce((n,d)=>n+d.amountCents,0);
         return {id:m.id,name:m.name,receivableCents:receivable,payableCents:payable,balanceCents:balances.find(b=>b.memberId===current.id).balanceCents};
-      }),expenseCount:snapshot.expenses.length,attachmentCount,from:dates[0]||null,to:dates.at(-1)||null,totalCents:active.reduce((n,e)=>n+e.amountCents,0),outstandingCents:active.reduce((n,e)=>n+Object.keys(e.shares).reduce((sum,key)=>sum+remainingFor(e,key),0),0)};
+      }),expenseCount:snapshot.expenses.length,attachmentCount,from:dates[0]||null,to:dates.at(-1)||null,totalCents:active.reduce((n,e)=>n+netExpenseAmount(e),0),outstandingCents:active.flatMap(expenseDebts).reduce((n,d)=>n+d.amountCents,0)};
     },
     async previewImport(user,payload){return this.previewArchive(user,await readImport(payload));},
     async importUploaded(user,payload,key,acquire){return write(user,key,'uploaded-import',payload,async client=>{
@@ -71,8 +82,8 @@ export function ledgerService(pool){
       await client.query('INSERT INTO bs_ledgers(id,owner_id,body) VALUES($1,$2,$3)',[ledgerId,user.uid,state]);
       await save(client,ledgerId,state);return ledgerId;
     });},
-    async personalConsumption(user){const {rows}=await pool.query('SELECT l.body FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1',[user.uid]);const snapshots=await Promise.all(rows.map(({body})=>engine(body,user).loadLedger(Object.keys(body.ledgers)[0])));return personalData(snapshots,user.uid);},
-    async updates(user){const {rows}=await pool.query('SELECT l.id,l.revision::text AS revision FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.id',[user.uid]);return rows;},
+    async personalConsumption(user){const {rows}=await pool.query('SELECT l.body FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1',[user.uid]);const snapshots=await Promise.all(rows.map(({body})=>engine(body,user).loadLedger(Object.keys(body.ledgers)[0])));return {...personalData(snapshots,user.uid),budgets:await budgets(user)};},
+    async updates(user){const {rows}=await pool.query('SELECT l.id,l.revision::text AS revision FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.id',[user.uid]);const privateRows=await budgets(user);if(privateRows.length)rows.push({id:'personal-budgets',revision:JSON.stringify(privateRows)});return rows;},
     async list(user){const {rows}=await pool.query('SELECT l.id,l.body->\'ledgers\'->l.id::text AS ledger FROM bs_ledgers l JOIN bs_memberships m ON m.ledger_id=l.id WHERE m.user_id=$1 ORDER BY l.updated_at DESC',[user.uid]);return rows.map(row=>({...row.ledger,id:row.id}));},
     async get(user,ledgerId){const state=await load(pool,ledgerId,user);return engine(state,user).loadLedger(ledgerId);},
     async create(user,payload,key){return write(user,key,'create',payload,async client=>{

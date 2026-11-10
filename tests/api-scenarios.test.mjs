@@ -12,6 +12,8 @@ import {ledgerExport} from '../public/scripts/ledger-export.mjs';
 import {calendarDate} from '../public/scripts/ledger-time.mjs';
 import {createApiStore} from '../public/scripts/api-store.mjs';
 import {paymentSubmission} from '../public/scripts/payment-submission.mjs';
+import {expenseDebts,remainingBetween,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
+import {refundCapacity,allocateRefund} from '../public/scripts/expense-refunds.mjs';
 
 const target=new URL(process.env.TEST_DATABASE_URL||'http://missing');
 if(!['postgres:','postgresql:'].includes(target.protocol)||!['127.0.0.1','localhost'].includes(target.hostname)||!target.pathname.endsWith('_test'))throw new Error('Use a disposable loopback PostgreSQL database ending _test.');
@@ -42,7 +44,7 @@ const pdf=()=>{const bytes=Buffer.from('%PDF-1.4\nSynthetic scenario receipt\n%%
 
 before(async()=>{
   await migrate(pool);
-  await pool.query('TRUNCATE bs_requests,bs_receipts,bs_invites,bs_memberships,bs_ledgers,bs_sessions,bs_identities,bs_users,bs_auth_limits');
+  await pool.query('TRUNCATE bs_personal_budgets,bs_requests,bs_receipts,bs_invites,bs_memberships,bs_ledgers,bs_sessions,bs_identities,bs_users,bs_auth_limits');
   app=await buildApp({pool,origins:[origin]});base=await app.listen({host:'127.0.0.1',port:0});
   alice=await register('小周');bob=await register('小林');chen=await register('安安');outsider=await register('小林');
 });
@@ -676,4 +678,101 @@ test('concurrent repeated group deletion returns a deleted conflict to the secon
  await command(alice,f.id,'deleteParticipantGroup',[g.id,g.version]);
  const deleted=await post(bob,f.id,'deleteParticipantGroup',[g.id,g.version]);assert.equal(deleted.status,409);assert.match(deleted.data.error.message,/已删除/);
  await consistent(f);
+});
+
+
+async function refundPayload(f,bill,amountCents,benefits){
+ const e=(await snapshot(alice,f.id)).expenses.find(e=>e.id===bill);
+ return {expenseId:bill,toMemberId:e.payerMemberId,expectedVersion:e.version,amountCents,date:'2026-11-10',note:'酒店退款',benefits:benefits||allocateRefund(amountCents,refundCapacity(e).capacities)};
+}
+async function returnPayment(f,bill,recipient,amountCents,user){
+ const e=(await snapshot(user,f.id)).expenses.find(e=>e.id===bill);
+ return command(user,f.id,'recordPayment',[{expenseId:bill,fromMemberId:e.payerMemberId,toMemberId:recipient,expectedVersion:e.version,expectedRemaining:remainingBetween(e,e.payerMemberId,recipient),amountCents,date:'2026-11-10'}]);
+}
+test('three accounts reconcile a settled refund, recipient-only returns and private cross-month consumption',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000,{date:'2026-10-01',category:'lodging'})]);
+ for(const member of [f.b,f.c])await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:member,amountCents:30000}]);
+ const payload=await refundPayload(f,bill,30000),before=await good(bob,'GET','/api/ledger-updates');
+ assert.equal((await post(bob,f.id,'recordRefund',[payload])).status,403);
+ assert.equal((await post(outsider,f.id,'recordRefund',[payload])).status,403);
+ const key=randomUUID(),rid=await command(alice,f.id,'recordRefund',[payload],key);assert.equal(await command(alice,f.id,'recordRefund',[payload],key),rid);
+ let s=await consistent(f);assert.equal(s.payments.length,2);assert.equal(s.expenses[0].refunds.length,1);assert.equal(netExpenseAmount(s.expenses[0]),60000);
+ assert.notDeepEqual(await good(bob,'GET','/api/ledger-updates'),before);
+ const bobAgain=await login(bob);assert.deepEqual(financial(await snapshot(bobAgain,f.id)),financial(s));
+ for(const user of [alice,bob,chen]){
+  const report=await good(user,'GET','/api/personal-consumption'),rows=report.rows.filter(r=>r.ledgerId===f.id);
+  assert.equal(rows.reduce((n,r)=>n+r.amountCents,0),20000);assert.equal(rows[0].date,'2026-10-01');assert.equal(rows[0].category,'lodging');assert.equal(rows[0].shares,undefined);
+ }
+ const e=s.expenses[0];assert.equal((await post(chen,f.id,'recordPayment',[{expenseId:bill,fromMemberId:'owner',toMemberId:f.b,expectedVersion:e.version,expectedRemaining:10000,amountCents:10000,date:'2026-11-10'}])).status,403);
+ await returnPayment(f,bill,f.b,10000,bobAgain);await returnPayment(f,bill,f.c,10000,chen);
+ s=await consistent(f);assert.deepEqual(expenseDebts(s.expenses[0]),[]);assert.deepEqual(memberBalances(s).map(r=>r.balanceCents),[0,0,0]);
+});
+
+test('partial payment and repeated refunds preserve balances through ZIP restore and refund reversal',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:30000,[f.b]:30000,[f.c]:30000},90000,{receipts:[pdf()]})]);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.b,amountCents:15000}]);await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.c,amountCents:30000}]);
+ await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,30000)]);let s=await consistent(f);
+ assert.equal(remainingBetween(s.expenses[0],f.b,'owner'),5000);await returnPayment(f,bill,f.c,10000,chen);
+ const second=await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,5000,{[f.b]:5000})]);s=await consistent(f);assert.equal(remainingBetween(s.expenses[0],f.b,'owner'),0);
+ const response=await fetch(base+`/api/ledgers/${f.id}/export`,{headers:{cookie:alice.cookie}}),bytes=Buffer.from(await response.arrayBuffer());assert.equal(response.status,200);
+ const body={format:'zip',content:bytes.toString('base64')},preview=await good(bob,'POST','/api/ledger-import/preview',body);assert.equal(preview.totalCents,55000);assert.equal(preview.attachmentCount,1);
+ const imported=await good(bob,'POST','/api/ledger-import',{...body,memberId:f.b}),copy=await snapshot(bob,imported);
+ assert.deepEqual(memberBalances(copy).map(r=>r.balanceCents),memberBalances(s).map(r=>r.balanceCents));assert.equal(copy.expenses[0].refunds.length,2);
+ await command(alice,f.id,'reverseRefund',[bill,{refundId:second,expectedVersion:s.expenses[0].version,reason:'第二笔金额记错'}]);s=await consistent(f);assert.equal(remainingBetween(s.expenses[0],f.b,'owner'),5000);assert.equal(s.expenses[0].history.at(-1).type,'refund-reversed');
+ const over=await refundPayload(f,bill,60001,{owner:20000,[f.b]:20000,[f.c]:20001});assert.equal((await post(alice,f.id,'recordRefund',[over])).status,400);
+ await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal((await post(alice,f.id,'recordRefund',[await refundPayload(f,bill,1)])).status,400);
+});
+
+test('concurrent and response-lost refund submissions create exactly one merchant refund',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:3000,[f.b]:3000,[f.c]:3000},9000)]);
+ const payload=await refundPayload(f,bill,3000),results=await Promise.all([post(alice,f.id,'recordRefund',[payload]),post(alice,f.id,'recordRefund',[payload])]);
+ assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);assert.equal((await consistent(f)).expenses[0].refunds.length,1);
+ const next=await refundPayload(f,bill,1500),originalFetch=globalThis.fetch;let dropped=false,writes=0;
+ globalThis.fetch=async(path,options={})=>{
+  const response=await originalFetch(new URL(path,base),{...options,headers:{...options.headers,cookie:alice.cookie,origin}});
+  if(options.method==='POST'){writes++;if(response.ok&&!dropped){dropped=true;await response.text();throw Error('lost success');}}
+  return response;
+ };
+ try{
+  const store=createApiStore(alice),submission=paymentSubmission(store,f.id,bill,'refund','recordRefund');
+  await assert.rejects(submission.submit(next));assert.ok(submission.pending);
+  const changed=await store.loadLedger(f.id);assert.equal(changed.expenses[0].refunds.length,2);
+  const reopened=paymentSubmission(store,f.id,bill,'refund','recordRefund');
+  await reopened.submit({...next,expectedVersion:changed.expenses[0].version});assert.equal(reopened.pending,null);assert.equal(writes,2);
+ }finally{globalThis.fetch=originalFetch;}
+ const s=await consistent(f);assert.equal(s.expenses[0].refunds.length,2);assert.equal(netExpenseAmount(s.expenses[0]),4500);
+});
+
+test('monthly budgets are private per account and currency, synchronize across sessions and stay out of ledger exports',async()=>{
+ const f=await trio(),path='/api/personal-budget',payload={month:'2026-11',currency:'CNY',amountCents:200000,expectedVersion:0};
+ const bobBefore=await good(bob,'GET','/api/ledger-updates');
+ const saved=await good(alice,'POST',path,{...payload,userId:bob.uid});assert.equal(saved.version,1);
+ await good(alice,'POST',path,{...payload,currency:'USD',amountCents:50000});
+ const session=await login(alice);const own=await good(session,'GET','/api/personal-consumption');assert.equal(own.budgets.length,2);assert.equal(own.budgets.find(b=>b.currency==='CNY').amountCents,200000);
+ for(const user of [bob,chen,outsider])assert.deepEqual((await good(user,'GET','/api/personal-consumption')).budgets,[]);
+ assert.deepEqual(await good(bob,'GET','/api/ledger-updates'),bobBefore);assert.ok((await good(alice,'GET','/api/ledger-updates')).some(row=>row.id==='personal-budgets'));
+ const exported=ledgerExport(await snapshot(alice,f.id)).data;assert.equal(exported.budgets,undefined);assert.equal(exported.personalBudgets,undefined);
+ for(const bad of [{month:'2026-13'},{currency:'cny'},{amountCents:-1},{amountCents:0.1},{expectedVersion:-1}])assert.equal((await request(alice,'POST',path,{...payload,...bad})).status,400);
+ assert.equal((await request(null,'POST',path,payload)).status,401);
+});
+
+test('budget concurrent edits, lost-response retries, removal and recreation preserve versions',async()=>{
+ const path='/api/personal-budget',payload={month:'2026-12',currency:'CNY',amountCents:200000,expectedVersion:0};
+ const results=await Promise.all([request(alice,'POST',path,payload),request(alice,'POST',path,{...payload,amountCents:210000})]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+ const key=randomUUID(),next={...payload,expectedVersion:1,amountCents:190000};await good(alice,'POST',path,next,key);const retried=await good(await login(alice),'POST',path,next,key);assert.equal(retried.version,2);
+ const removed=await good(alice,'POST',path,{...next,expectedVersion:2,amountCents:null});assert.equal(removed.version,3);
+ assert.equal((await request(alice,'POST',path,payload)).status,409);
+ const recreated=await good(alice,'POST',path,{...next,expectedVersion:3,amountCents:0});assert.equal(recreated.version,4);assert.equal(recreated.amountCents,0);
+});
+
+test('budget consumption follows personal net shares and original month, independently of repayments',async()=>{
+ const {budgetSummary}=await import('../public/scripts/personal-budget.mjs');
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:130000,[f.b]:50000,[f.c]:50000},230000,{date:'2026-09-01'})]);
+ await good(alice,'POST','/api/personal-budget',{month:'2026-09',currency:'CNY',amountCents:200000,expectedVersion:0});
+ const summary=async()=>budgetSummary(await good(alice,'GET','/api/personal-consumption'),'2026-09','CNY');assert.equal((await summary()).remainingCents,70000);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.b,amountCents:50000}]);assert.equal((await summary()).remainingCents,70000);
+ const refund=await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,30000,{owner:30000})]);assert.equal((await summary()).remainingCents,100000);
+ const s=await snapshot(alice,f.id);await command(alice,f.id,'reverseRefund',[bill,{refundId:refund,expectedVersion:s.expenses[0].version,reason:'记录有误'}]);assert.equal((await summary()).remainingCents,70000);
+ await command(alice,f.id,'setAnalyticsInclusion',[false]);assert.equal((await summary()).spentCents,0);
+ await command(alice,f.id,'setAnalyticsInclusion',[true]);await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal((await summary()).remainingCents,70000);
 });

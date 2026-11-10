@@ -44,3 +44,10 @@ CREATE TABLE IF NOT EXISTS bs_requests (
   result jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(user_id,key)
 );
 INSERT INTO bs_schema(version) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- Account-private monthly plans, excluded from shared ledger exports.
+CREATE TABLE IF NOT EXISTS bs_personal_budgets (
+ user_id uuid NOT NULL REFERENCES bs_users(id), month text NOT NULL, currency text NOT NULL,
+ amount_cents bigint CHECK (amount_cents BETWEEN 0 AND 9007199254740991),
+ version integer NOT NULL CHECK (version > 0), PRIMARY KEY(user_id,month,currency)
+);

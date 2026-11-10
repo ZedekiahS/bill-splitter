@@ -1,3 +1,4 @@
+import {mountBudget} from './budget-view.mjs';
 import {t,translateError,getLanguage} from './i18n.mjs';
 import {formatMoney} from './ledger-core.mjs';
 import {categories,dateRange,summarizeConsumption,comparisonPeriods,compareConsumption,monthlyHistory,checkedSum} from './expense-analytics.mjs';
@@ -8,8 +9,8 @@ const select=(name,entries,value)=>`<select class="form-select" data-report-filt
 const empty=()=>`<p class="muted report-empty">${t('这个范围还没有消费记录。')}</p>`;
 const monthLabel=month=>new Intl.DateTimeFormat(getLanguage(),{year:'numeric',month:'long',timeZone:'UTC'}).format(new Date(`${month}-01T12:00:00Z`));
 
-export function mountConsumption(target,{data,config,personal,today,onOpen,onInclusion,members=[]}){
-  const projects=data.projects,currencies=[...new Set(projects.map(p=>p.currency))].sort();
+export function mountConsumption(target,{data,config,personal,today,onOpen,onInclusion,onSaveBudget,onReloadBudgets,onBudgetSettled,members=[]}){
+  const projects=data.projects,currencies=[...new Set([...projects.map(p=>p.currency),...(personal?['CNY','USD',...(data.budgets||[]).map(b=>b.currency)]:[])])].sort();
   config.period??=personal?'month':'all';config.grain??='auto';config.scope??='all';config.view??='overview';config.year??=today.slice(0,4);
   if(!currencies.includes(config.currency))config.currency=currencies[0]||'CNY';
   if(config.ledgerId&&!projects.some(p=>p.id===config.ledgerId&&p.included&&p.currency===config.currency))config.ledgerId='';
@@ -39,7 +40,7 @@ export function mountConsumption(target,{data,config,personal,today,onOpen,onInc
     const history=personal&&config.view==='history';
     const years=[...new Set([today.slice(0,4),config.year,...allRows.map(r=>r.date.slice(0,4)).filter(y=>y<=today.slice(0,4))])].sort().reverse();
     target.innerHTML=`${personal?`<div class="report-view-switch" role="group" aria-label="${t('消费视图')}">${[['overview','消费概览'],['history','历史明细']].map(([id,label])=>`<button class="text-link" data-report-view="${id}" aria-pressed="${config.view===id}">${t(label)}</button>`).join('')}</div>`:''}
-      <div class="report-filters">
+      ${personal&&!history?'<div id="personal-budget"></div>':''}<div class="report-filters">
         ${field('时间范围',select('period',[['month',t('本月')],['last-month',t('上月')],['30-days',t('近 30 天')],['year',t(personal?'年度回顾':'今年')],['all',t('全部')],['custom',t('自定义')]],config.period))}
         ${personal&&config.period==='year'?field('年份',select('year',years.map(y=>[y,y]),config.year)):''}
         ${personal?field('币种',select('currency',currencies.map(id=>[id,id]),currency())):field('统计口径',select('scope',[['all',t('项目全部消费')],['mine',t('只看我的消费')]],config.scope))}
@@ -52,6 +53,9 @@ export function mountConsumption(target,{data,config,personal,today,onOpen,onInc
         <div class="report-total"><div><span>${t(personal||config.scope==='mine'?'我的实际消费':'项目总开销')} · ${escape(currency())}</span><strong>${money(report.totalCents)}</strong></div><p>${t('{count}笔账单',{count:report.expenseCount})}${range.from||range.to?' · '+escape([range.from,range.to].filter(Boolean).join(' — ')):''}</p></div>
         ${!history?`${comparison?comparisonMarkup(comparison,periods):''}${personal&&config.period==='year'?`<h2 class="annual-title">${t('{year} 年消费回顾',{year:escape(config.year)})}</h2>`:''}${charts(report)}${personal?`<button class="button secondary report-history-link" data-history-link>${t('查看历史明细')}</button>`:''}`:''}
         ${history||!personal?`<section class="panel report-details" id="report-details"><div class="section-heading"><h2 tabindex="-1">${t(history?'历史明细':'消费明细')}</h2><button class="text-link" data-clear-drill ${drill?'':'hidden'}>${t('显示全部明细')}</button></div><div id="report-rows"></div></section>`:''}`}`;
+    if(personal&&!history)mountBudget(target.querySelector('#personal-budget'),{data,config,today,currency:currency(),onSave:onSaveBudget,onReload:onReloadBudgets,onSettled:onBudgetSettled,onDetails:(month,unit)=>{
+      config.period='custom';config.from=month+'-01';config.to=month+'-'+new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();config.currency=unit;config.category='';config.ledgerId='';resetDrill();showDetails();
+    }});
     if(report&&(history||!personal))renderRows(report,range,history);
     target.querySelector('.comparison-categories')?.addEventListener('toggle',event=>{config.changesOpen=event.target.open;});
     target.querySelector('.report-scope')?.addEventListener('toggle',event=>{config.scopeOpen=event.target.open;});

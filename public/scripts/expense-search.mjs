@@ -1,10 +1,10 @@
-import {consumptionShares,remainingFor,validateDate} from './ledger-core.mjs';
+import {consumptionShares,expenseDebts,validateDate} from './ledger-core.mjs';
 export function filterExpenses(expenses,{query='',memberId='',memberRole='any',from='',to='',status='all'}={}){
   if(from)validateDate(from);if(to)validateDate(to);
   if(from&&to&&from>to)throw new Error('结束日期不能早于开始日期。');
   const search=query.trim().toLocaleLowerCase();
   return expenses.filter(expense=>{
-    const outstanding=Object.keys(expense.shares).reduce((sum,id)=>sum+remainingFor(expense,id),0);
+    const outstanding=expenseDebts(expense).reduce((sum,row)=>sum+row.amountCents,0);
     return (!search||[expense.title,expense.note||''].some(text=>text.toLocaleLowerCase().includes(search)))&&
       (!from||expense.date>=from)&&(!to||expense.date<=to)&&
       (!memberId||(memberRole==='payer'?expense.payerMemberId===memberId:memberRole==='participant'?Object.hasOwn(consumptionShares(expense),memberId):expense.payerMemberId===memberId||Object.hasOwn(consumptionShares(expense),memberId)))&&

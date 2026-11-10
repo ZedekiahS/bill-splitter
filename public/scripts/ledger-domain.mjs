@@ -1,5 +1,7 @@
+import {nextBudget} from './personal-budget.mjs';
 import {projectData,personalData} from './expense-analytics.mjs';
-import { assertCents, remainingFor, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
+import { assertCents, remainingFor, remainingBetween, originalShares, effectiveRefunds, splitShares, validateDate, consumptionShares } from "./ledger-core.mjs";
+import {refundData} from './expense-refunds.mjs';
 import { validateExpenseExtras, normalizeSchedule, isScheduledDate, occurrenceId } from "./expense-features.mjs";
 import { expenseVersion, legacyHistory, ensureHistory, appendHistory } from './expense-history.mjs';
 import {randomId as newId} from './random-id.mjs';
@@ -88,10 +90,18 @@ function requireSource(payload) {
 function paymentData(expenseId, expense, payload, uid, createdAt) {
   const amountCents = assertCents(payload.amountCents);
   const fromMemberId = payload.fromMemberId;
-  if (amountCents > remainingFor(expense, fromMemberId)) throw new Error("确认金额不能超过这位成员尚未偿还的金额。");
-  return { expenseId, fromMemberId, toMemberId: expense.payerMemberId, amountCents,
+  const toMemberId=payload.toMemberId||expense.payerMemberId;
+  if (amountCents > remainingBetween(expense, fromMemberId,toMemberId)) throw new Error("确认金额不能超过这位成员尚未偿还的金额。");
+  return { expenseId, fromMemberId, toMemberId, amountCents,
     date: validateDate(payload.date || today()), note: String(payload.note || "").trim().slice(0, 300),
     type: "payment", reversesId: null, reversedBy: null, createdByUid: uid, createdAt };
+}
+function applyPayment(expense,payment,sign=1){
+  const returning=payment.fromMemberId===expense.payerMemberId,key=returning?payment.toMemberId:payment.fromMemberId;
+  const amounts=returning?(expense.returned||={}):expense.repaid;
+  const next=BigInt(amounts[key]||0)+BigInt(sign)*BigInt(payment.amountCents);
+  if(next<0n||next>BigInt(Number.MAX_SAFE_INTEGER))throw new Error('账本合计超出支持范围。');
+  amounts[key]=Number(next);
 }
 function requireInvite(invite) {
   if (!invite || invite.status !== "open" || expiryMillis(invite.expiresAt) <= Date.now()) throw new Error("邀请已失效、过期或被认领。");
@@ -117,7 +127,8 @@ export function createStateStore({read,mutate,user}) {
   const me=()=>requireUser(user);
     const rows = table => Object.entries(table || {}).map(([id, data]) => withId(id, data));
     Object.assign(store, {
-      async personalConsumption(){const snapshots=await Promise.all((await store.listLedgers()).map(l=>store.loadLedger(l.id)));return personalData(snapshots,me().uid);},
+      async personalConsumption(){const snapshots=await Promise.all((await store.listLedgers()).map(l=>store.loadLedger(l.id)));return {...personalData(snapshots,me().uid),budgets:Object.values(read().personalBudgets?.[me().uid]||{})};},
+      async savePersonalBudget(payload){return mutate((state,user)=>{const map=((state.personalBudgets||={})[user.uid]||={}),key=payload.month+':'+payload.currency,next=nextBudget(map[key],payload);map[key]=next;return next;});},
       async setAnalyticsInclusion(id,included){return mutate((state,user)=>{const ledger=state.ledgers[id];readable(ledger,user);if(typeof included!=='boolean')throw new Error('统计范围无效。');(ledger.analyticsInclusions||={})[user.uid]=included;});},
       async updateProject(id,payload){return mutate((state,user,at)=>{const ledger=state.ledgers[id];owner(ledger,user);if(payload.expectedVersion!==(ledger.projectVersion||1))throw Object.assign(new Error('账本设置已更新，请重新打开后修改。'),{statusCode:409});const next=projectData(payload),title=text(payload.title,'账本名称');Object.assign(ledger,next,{title,projectVersion:(ledger.projectVersion||1)+1});});},
       async listLedgers() { const uid = me().uid; return rows(read().ledgers).filter(ledger => ledger.memberUids.includes(uid)); },
@@ -238,11 +249,15 @@ export function createStateStore({read,mutate,user}) {
         const next=expenseData({...payload,receipts:[],sourceTemplateId:previous.sourceTemplateId,sourceDate:previous.sourceDate},state.members[id],previous.createdByUid,previous.createdAt,previous);
         if(state.ledgers[id].ownerUid!==user.uid&&state.members[id][next.payerMemberId].uid!==user.uid)throw new Error('只能记录由自己垫付的费用。');
         next.receipts=receipts;
-        const financial=record=>JSON.stringify([record.amountCents,record.payerMemberId,Object.entries(consumptionShares(record)).sort(([a],[b])=>a.localeCompare(b)),(record.items||[]).map(({category,...item})=>item)]);
+        if(previous.refunds?.some(r=>next.date>r.date))throw new Error('消费日期不能晚于已记录的退款日期。');
+        const financial=record=>JSON.stringify([record.amountCents,record.payerMemberId,Object.entries(originalShares(record)).sort(([a],[b])=>a.localeCompare(b)),(record.items||[]).map(({category,...item})=>item)]);
         const financialChanged=financial(next)!==financial(previous);
         if(financialChanged&&Object.values(previous.repaid).some(value=>value!==0))throw new Error('已有收款记录。请先撤销相关收款，再更改金额、垫付人或分摊。');
+        if(financialChanged&&(previous.refunds?.length||Object.values(previous.returned||{}).some(Boolean)))throw new Error('已有退款记录，不能更改原金额、垫付人或分摊。');
         if(!financialChanged)next.shares=structuredClone(previous.shares);
         next.repaid=Object.fromEntries(Object.keys(next.shares).map(key=>[key,previous.repaid[key]||0]));
+        if(previous.refunds)next.refunds=structuredClone(previous.refunds);
+        if(previous.returned)next.returned=structuredClone(previous.returned);
         const before=expenseVersion(previous),after=expenseVersion(next);
         if(JSON.stringify(before)===JSON.stringify(after))throw new Error('没有需要保存的更改。');
         ensureHistory(state,id,expenseId);
@@ -270,20 +285,36 @@ export function createStateStore({read,mutate,user}) {
         if (state.occurrences[id][key]) throw new Error("这期账单已经处理，请刷新账本。");
         state.occurrences[id][key] = occurrenceData(templateId, date, "skipped", null, user, timestamp); return key;
       }); },
+      async recordRefund(id,payload){return mutate((state,user,at)=>{
+        const e=state.expenses[id]?.[payload.expenseId];if(!e)throw new Error('费用不存在。');
+        receiver(state.ledgers[id],e,state.members[id][e.payerMemberId],user);
+        if(payload.expectedVersion!==(e.version||1))throw Object.assign(new Error('账单已更新，请重新核对退款。'),{statusCode:409});
+        const refund={...refundData(e,payload),id:newId(),createdByUid:user.uid,createdAt:at};
+        ensureHistory(state,id,payload.expenseId);(e.refunds||=[]).push(refund);
+        appendHistory(state,id,payload.expenseId,user,at,{type:'refund',refundId:refund.id,amountCents:refund.amountCents,toMemberId:refund.toMemberId,benefits:refund.benefits,date:refund.date,note:refund.note});return refund.id;
+      });},
+      async reverseRefund(id,expenseId,payload){return mutate((state,user,at)=>{
+        const e=state.expenses[id]?.[expenseId];if(!e)throw new Error('费用不存在。');
+        receiver(state.ledgers[id],e,state.members[id][e.payerMemberId],user);
+        if(payload.expectedVersion!==(e.version||1))throw Object.assign(new Error('账单已更新，请重新核对退款。'),{statusCode:409});
+        const r=e.refunds?.find(r=>r.id===payload.refundId&&r.status==='active');if(!r)throw new Error('退款记录已撤销或不存在。');
+        const reason=text(payload.reason,'撤销原因',300);r.status='reversed';r.reversedAt=at;r.reversedByUid=user.uid;r.reverseReason=reason;
+        appendHistory(state,id,expenseId,user,at,{type:'refund-reversed',refundId:r.id,amountCents:r.amountCents,toMemberId:r.toMemberId,benefits:r.benefits,reason});
+      });},
       async recordPaymentBatch(id,payload) {return mutate((state,user,createdAt)=>{
         writable(state.ledgers[id],user);
         const expenses=rows(state.expenses[id]);
-        if(Array.isArray(payload.allocations)&&payload.allocations.some(row=>{const expense=expenses.find(e=>e.id===row?.expenseId);return !expense||expense.status!=='active'||(expense.version||1)!==row.expectedVersion||remainingFor(expense,payload.fromMemberId)!==row.expectedRemaining;}))throw Object.assign(new Error('待结金额已变化，请重新核对分配后确认。'),{statusCode:409});
+        if(Array.isArray(payload.allocations)&&payload.allocations.some(row=>{const expense=expenses.find(e=>e.id===row?.expenseId);return !expense||expense.status!=='active'||(expense.version||1)!==row.expectedVersion||remainingBetween(expense,payload.fromMemberId,payload.toMemberId)!==row.expectedRemaining;}))throw Object.assign(new Error('待结金额已变化，请重新核对分配后确认。'),{statusCode:409});
         const plan=repaymentPlan(expenses,payload);
         if(!Array.isArray(payload.allocations)||plan.length!==payload.allocations.length||plan.some((row,i)=>Object.keys(row).some(key=>row[key]!==payload.allocations[i]?.[key])))throw Object.assign(new Error('待结金额已变化，请重新核对分配后确认。'),{statusCode:409});
         const prepared=plan.map(row=>{
-          const expense=state.expenses[id][row.expenseId];receiver(state.ledgers[id],expense,state.members[id][expense.payerMemberId],user);
+          const expense=state.expenses[id][row.expenseId];receiver(state.ledgers[id],expense,state.members[id][payload.toMemberId],user);
           return {row,expense,data:paymentData(row.expenseId,expense,{...payload,amountCents:row.amountCents},user.uid,createdAt)};
         });
         const batchId=newId();
         for(const {row,expense,data} of prepared){
           const paymentId=newId();ensureHistory(state,id,row.expenseId);
-          expense.repaid[data.fromMemberId]+=data.amountCents;expense.lastPaymentId=paymentId;
+          applyPayment(expense,data);expense.lastPaymentId=paymentId;
           state.payments[id][paymentId]={...data,batchId};
           appendHistory(state,id,row.expenseId,user,createdAt,{type:'payment',paymentId,batchId,amountCents:data.amountCents,fromMemberId:data.fromMemberId,toMemberId:data.toMemberId,note:data.note});
         }
@@ -292,23 +323,23 @@ export function createStateStore({read,mutate,user}) {
       async reversePaymentBatch(id,batchId) {return mutate((state,user,createdAt)=>{
         const payments=Object.entries(state.payments[id]||{}).filter(([,p])=>p.batchId===batchId);
         if(!payments.length||payments.some(([,p])=>p.type!=='payment'||p.reversedBy))throw new Error('这条还款记录不可再次撤销。');
-        for(const [,p]of payments){const e=state.expenses[id][p.expenseId];receiver(state.ledgers[id],e,state.members[id][e.payerMemberId],user);}
+        for(const [,p]of payments){const e=state.expenses[id][p.expenseId];receiver(state.ledgers[id],e,state.members[id][p.toMemberId],user);}
         const reversalBatchId=newId();
         for(const [paymentId,p]of payments){
           const e=state.expenses[id][p.expenseId],reversalId=newId();ensureHistory(state,id,p.expenseId);
           state.payments[id][reversalId]={...p,batchId:reversalBatchId,reversesBatchId:batchId,type:'reversal',reversesId:paymentId,reversedBy:null,date:calendarDate(state.ledgers[id].timeZone),note:'撤销还款确认',createdByUid:user.uid,createdAt};
-          p.reversedBy=reversalId;e.repaid[p.fromMemberId]-=p.amountCents;e.lastPaymentId=reversalId;
+          p.reversedBy=reversalId;applyPayment(e,p,-1);e.lastPaymentId=reversalId;
           appendHistory(state,id,p.expenseId,user,createdAt,{type:'payment-reversed',paymentId:reversalId,batchId:reversalBatchId,amountCents:p.amountCents,fromMemberId:p.fromMemberId,toMemberId:p.toMemberId});
         }
         return reversalBatchId;
       });},
       async recordPayment(id, payload) { return mutate((state, user, createdAt) => {
         const expense = state.expenses[id]?.[payload.expenseId]; if (!expense) throw new Error("费用不存在。");
-        receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
-        if(payload.toMemberId!==expense.payerMemberId||payload.expectedVersion!==(expense.version||1)||payload.expectedRemaining!==remainingFor(expense,payload.fromMemberId))throw Object.assign(new Error('收款信息已改变，请核对收款人和待收金额后重新确认。'),{statusCode:409});
+        receiver(state.ledgers[id], expense, state.members[id][payload.toMemberId], user);
+        if(payload.expectedVersion!==(expense.version||1)||payload.expectedRemaining!==remainingBetween(expense,payload.fromMemberId,payload.toMemberId))throw Object.assign(new Error('收款信息已改变，请核对收款人和待收金额后重新确认。'),{statusCode:409});
         const data = paymentData(payload.expenseId, expense, payload, user.uid, createdAt), paymentId = newId();
         ensureHistory(state,id,payload.expenseId);
-        expense.repaid[data.fromMemberId] += data.amountCents; expense.lastPaymentId = paymentId;
+        applyPayment(expense,data); expense.lastPaymentId = paymentId;
         state.payments[id][paymentId] = data;
         appendHistory(state,id,payload.expenseId,user,createdAt,{type:'payment',paymentId,amountCents:data.amountCents,fromMemberId:data.fromMemberId,toMemberId:data.toMemberId,note:data.note});return paymentId;
       }); },
@@ -316,11 +347,11 @@ export function createStateStore({read,mutate,user}) {
         const payment = state.payments[id]?.[paymentId];
         if (!payment || payment.type !== "payment" || payment.reversedBy) throw new Error("这条还款记录不可再次撤销。");
         if(payment.batchId)throw new Error('请从还款流水撤销整笔汇总还款。');
-        const expense = state.expenses[id][payment.expenseId]; receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
+        const expense = state.expenses[id][payment.expenseId]; receiver(state.ledgers[id], expense, state.members[id][payment.toMemberId], user);
         const reversalId = newId();
         ensureHistory(state,id,payment.expenseId);
         state.payments[id][reversalId] = { ...payment, type: "reversal", reversesId: paymentId, reversedBy: null, date: calendarDate(state.ledgers[id].timeZone), note: "撤销还款确认", createdByUid: user.uid, createdAt };
-        payment.reversedBy = reversalId; expense.repaid[payment.fromMemberId] -= payment.amountCents; expense.lastPaymentId = reversalId;
+        payment.reversedBy = reversalId; applyPayment(expense,payment,-1); expense.lastPaymentId = reversalId;
         appendHistory(state,id,payment.expenseId,user,createdAt,{type:'payment-reversed',paymentId:reversalId,amountCents:payment.amountCents,fromMemberId:payment.fromMemberId,toMemberId:payment.toMemberId});
         return reversalId;
       }); },
@@ -328,6 +359,7 @@ export function createStateStore({read,mutate,user}) {
         const expense = state.expenses[id]?.[expenseId]; if (!expense) throw new Error("费用不存在。");
         receiver(state.ledgers[id], expense, state.members[id][expense.payerMemberId], user);
         if (Object.values(expense.repaid).some(value => value !== 0)) throw new Error("请先撤销关联的还款确认，再撤销费用。");
+        if(effectiveRefunds(expense).length||Object.values(expense.returned||{}).some(Boolean))throw new Error('请先撤销关联的退款和返还记录，再撤销费用。');
         ensureHistory(state,id,expenseId);
         expense.status = "reversed"; expense.reversedAt = timestamp;
         appendHistory(state,id,expenseId,user,timestamp,{type:'reversed'});

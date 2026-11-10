@@ -26,7 +26,7 @@ async function join(f){const token=await command(f.ledger,'createInvite',[f.memb
 const payload=f=>({title:'Dinner',date:'2026-10-29',amountCents:10001,payerMemberId:'owner',shares:{owner:5001,[f.member]:5000},note:'Shared dinner'});
 before(async()=>{
   await migrate(pool);
-  await pool.query('TRUNCATE bs_requests,bs_receipts,bs_invites,bs_memberships,bs_ledgers,bs_sessions,bs_identities,bs_users,bs_auth_limits');
+  await pool.query('TRUNCATE bs_personal_budgets,bs_requests,bs_receipts,bs_invites,bs_memberships,bs_ledgers,bs_sessions,bs_identities,bs_users,bs_auth_limits');
   app=await buildApp({pool,origins:[origin]});alice=await register('Alice');bob=await register('Bob');outsider=await register('Outsider');
 });
 after(async()=>{if(app)await app.close();await pool.end();});

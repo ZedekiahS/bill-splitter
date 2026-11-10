@@ -1,3 +1,5 @@
+import refundMessages from '../public/scripts/refund-messages.mjs';
+import {expenseDebts,remainingBetween,refundedTotal,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -33,7 +35,7 @@ async function fixture(){
  const add=(id,amount,date='2026-11-09')=>{snapshot.expenses.push({id,title:id,date,status:'active',payerMemberId:'other',amountCents:amount,category:'food',shares:{me:amount},repaid:{}});revision++;};
  add('first',1000);
  const store={currentUser:{uid:'me'},listUpdates:async()=>{reads++;return [{id:'a',revision}];},listLedgers:async()=>[structuredClone(ledger)],loadLedger:async()=>structuredClone(snapshot),personalConsumption:async()=>personalData([snapshot],'me')};
- const context=vm.createContext({URL,URLSearchParams,location:w.location,history:w.history,document:w.document,window:w,setTimeout:w.setTimeout.bind(w),clearTimeout:w.clearTimeout.bind(w),registerMessages,t,translateError,formatMoney,analyticsMessages,messages:{},featureMessages:{},accountMessages:{},categories,consumptionRows,mountConsumption,translatePage(){},calendarDate:()=> '2026-11-09',createDraftStore:()=>({}),store});
+ const context=vm.createContext({refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL,URLSearchParams,location:w.location,history:w.history,document:w.document,window:w,setTimeout:w.setTimeout.bind(w),clearTimeout:w.clearTimeout.bind(w),registerMessages,t,translateError,formatMoney,analyticsMessages,messages:{},featureMessages:{},accountMessages:{},categories,consumptionRows,mountConsumption,translatePage(){},calendarDate:()=> '2026-11-09',createDraftStore:()=>({}),store});
  vm.runInContext(source,context);vm.runInContext("state.store=store;state.starting=false;",context);
  await vm.runInContext('loadData()',context);await tick();
  return {dom,context,snapshot,add,touch:()=>revision++,get reads(){return reads;},sync:()=>vm.runInContext('syncChanges()',context),root:w.document};
@@ -240,4 +242,24 @@ for(const outcome of ['success','error'])test(`discarded foreground ${outcome} d
   assert.match(f.root.querySelector('.report-total strong').textContent,/10\.00/);
   f.context.store.personalConsumption=original;await scheduler.poll();assert.match(f.root.querySelector('.report-total strong').textContent,/10\.00/);assert.equal(scheduler.delay,3000);
  }finally{scheduler.stop();f.dom.window.close();}
+});
+
+test('budget failure after leaving and returning restores editable retry state instead of a stuck saving form',async()=>{
+ const f=await fixture();try{
+  const save=deferred();f.context.store.savePersonalBudget=()=>save.promise;
+  f.root.querySelector('[data-budget-edit]').click();const input=f.root.querySelector('[name="budgetAmount"]');input.value='2000';input.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+  f.root.querySelector('#budget-form').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');assert.equal(f.root.querySelector('#budget-form [type="submit"]').disabled,true);
+  save.reject(Error('offline'));await tick();await tick();
+  assert.equal(f.root.querySelector('#consumption-report').hasAttribute('aria-busy'),false);assert.equal(f.root.querySelector('#budget-form [type="submit"]').disabled,false);
+  assert.match(f.root.querySelector('#budget-form').textContent,/核实预算保存/);assert.equal(f.root.querySelector('[name="budgetAmount"]').value,'2000');
+ }finally{f.dom.window.close();}
+});
+
+test('budget edit blocks remote repaint until cancelled, then consumes the pending revision',async()=>{
+ const f=await fixture();try{
+  await f.sync();f.root.querySelector('[data-budget-edit]').click();const input=f.root.querySelector('[name="budgetAmount"]');input.value='1200';input.dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));f.add('second',2000);
+  await f.sync();assert.equal(f.root.querySelector('[name="budgetAmount"]'),input);assert.equal(input.value,'1200');
+  f.root.querySelector('[data-budget-cancel]').click();await f.sync();await tick();assert.match(f.root.querySelector('.report-total strong').textContent,/30\.00/);
+ }finally{f.dom.window.close();}
 });

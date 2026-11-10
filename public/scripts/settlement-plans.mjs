@@ -1,13 +1,12 @@
-import {assertCents,remainingFor} from './ledger-core.mjs';
+import {assertCents,expenseDebts} from './ledger-core.mjs';
 
 function sum(values){const result=values.reduce((n,value)=>n+BigInt(value),0n);if(result>BigInt(Number.MAX_SAFE_INTEGER))throw new Error('账本合计超出支持范围。');return Number(result);}
 export function settlementGroups(expenses){
   const groups=new Map();
   for(const expense of expenses){
     if(expense.status!=='active')continue;
-    for(const fromMemberId of Object.keys(expense.shares)){
-      const remainingCents=remainingFor(expense,fromMemberId);if(!remainingCents)continue;
-      const toMemberId=expense.payerMemberId,key=JSON.stringify([fromMemberId,toMemberId]);
+    for(const {fromMemberId,toMemberId,amountCents:remainingCents} of expenseDebts(expense)){
+      const key=JSON.stringify([fromMemberId,toMemberId]);
       if(!groups.has(key))groups.set(key,{fromMemberId,toMemberId,expenses:[]});
       groups.get(key).expenses.push({...expense,remainingCents});
     }

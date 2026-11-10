@@ -3,7 +3,7 @@ import {t,getLanguage} from './i18n.mjs';
 import {formatMoney,consumptionShares} from './ledger-core.mjs';
 import {receiptMarkup} from './receipt-viewer.mjs';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const types={created:'创建账单',updated:'更正账单',payment:'确认收款','payment-reversed':'撤销收款',reversed:'撤销账单'};
+const types={created:'创建账单',updated:'更正账单',payment:'确认收款','payment-reversed':'撤销收款',reversed:'撤销账单',refund:'商家退款','refund-reversed':'撤销退款记录'};
 export function historyMarkup(snapshot,expenseId){
   const name=id=>snapshot.members.find(member=>member.id===id)?.name||t('成员');
   const money=value=>formatMoney(value,snapshot.ledger.currency);
@@ -12,6 +12,6 @@ export function historyMarkup(snapshot,expenseId){
   if(!events.length)return `<p class="muted">${t('还没有操作记录。')}</p>`;
   return `<ol class="activity-list">${events.map(({event,expense})=>{
     const at=event.at?new Intl.DateTimeFormat(getLanguage()==='en'?'en-US':'zh-CN',{dateStyle:'medium',timeStyle:'medium'}).format(new Date(event.at)):t('时间未记录');
-    return `<li class="activity-entry"><div class="activity-heading"><strong>${t(types[event.type]||'操作记录')}</strong><time datetime="${escape(event.at||'')}">${escape(at)}</time></div><p class="activity-actor">${escape(event.actorName)||t('操作人未记录')}${expenseId?'':` · ${escape(expense.title)}`}</p>${event.reason?`<p class="history-note">${escape(event.reason)}</p>`:''}${event.amountCents?`<p>${escape(name(event.fromMemberId))} → ${escape(name(event.toMemberId))} <strong>${money(event.amountCents)}</strong></p>${event.note?`<p class="history-note">${escape(event.note)}</p>`:''}`:''}${event.before?`<details data-history-id="${escape(event.id)}"><summary>${t('查看更正前后')}</summary><div class="history-versions">${version(event.before,'更正前')}${version(event.after,'更正后')}</div></details>`:event.after?`<details data-history-id="${escape(event.id)}"><summary>${t('查看原始账单')}</summary>${version(event.after,'原始账单')}</details>`:''}</li>`;
+    return `<li class="activity-entry"><div class="activity-heading"><strong>${t(types[event.type]||'操作记录')}</strong><time datetime="${escape(event.at||'')}">${escape(at)}</time></div><p class="activity-actor">${escape(event.actorName)||t('操作人未记录')}${expenseId?'':` · ${escape(expense.title)}`}</p>${event.reason?`<p class="history-note">${escape(event.reason)}</p>`:''}${event.amountCents?`<p>${event.type.startsWith('refund')?t('商家退款'):escape(name(event.fromMemberId))} → ${escape(name(event.toMemberId))} <strong>${money(event.amountCents)}</strong></p>${event.note?`<p class="history-note">${escape(event.note)}</p>`:''}`:''}${event.type.startsWith('refund')?`<p>${escape(event.date||'')} · ${Object.entries(event.benefits||{}).filter(([,v])=>v).map(([id,v])=>`${escape(name(id))} ${money(v)}`).join(' · ')}</p>`:''}${event.before?`<details data-history-id="${escape(event.id)}"><summary>${t('查看更正前后')}</summary><div class="history-versions">${version(event.before,'更正前')}${version(event.after,'更正后')}</div></details>`:event.after?`<details data-history-id="${escape(event.id)}"><summary>${t('查看原始账单')}</summary>${version(event.after,'原始账单')}</details>`:''}</li>`;
   }).join('')}</ol>`;
 }

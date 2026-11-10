@@ -1,3 +1,5 @@
+import {openRefundEditor} from './refund-entry.mjs';
+import refundMessages from './refund-messages.mjs';
 import {categories,projectTypes,consumptionRows,checkedSum} from './expense-analytics.mjs';
 import {mountConsumption} from './consumption-view.mjs';
 import analyticsMessages from './analytics-messages.mjs';
@@ -8,7 +10,7 @@ import accountMessages from './account-messages.mjs';
 import { t, getLanguage, setLanguage, translatePage, formatDate, translateError, registerMessages } from './i18n.mjs';
 import messages from './app-messages.mjs';
 import { createStore } from './ledger-store.mjs';
-import { parseMoney, formatMoney, splitShares, consumptionShares, memberBalances, remainingFor, settlementText } from './ledger-core.mjs';
+import { parseMoney, formatMoney, splitShares, consumptionShares, memberBalances, remainingFor, expenseDebts, remainingBetween, refundedTotal, netExpenseAmount, settlementText } from './ledger-core.mjs';
 import { openExpenseEditor } from './expense-entry.mjs';
 import { dueOccurrences } from './expense-features.mjs';
 import { receiptMarkup,openReceiptViewer,closeReceiptViewer } from './receipt-viewer.mjs';
@@ -23,6 +25,7 @@ import {reconcileExpenseDraft,resolveExpenseDraft} from './expense-recovery.mjs'
 import {ledgerExport,exportFileName} from './ledger-export.mjs';
 
 registerMessages(messages);
+registerMessages(refundMessages);
 registerMessages(analyticsMessages);
 registerMessages(accountMessages);
 registerMessages(featureMessages);
@@ -59,9 +62,9 @@ const memberName = id => member(id)?.name || t('成员');
 const mine = () => state.snapshot?.members.find(m => m.uid === state.store.currentUser.uid);
 const owner = () => state.snapshot?.ledger.ownerUid === state.store.currentUser.uid;
 const archived = () => state.snapshot?.ledger.status==='archived';
-const canReceive = expense => !archived()&&(owner() || member(expense.payerMemberId)?.uid === state.store.currentUser.uid);
+const canReceive = (expense,toMemberId=expense.payerMemberId) => !archived()&&(owner() || member(toMemberId)?.uid === state.store.currentUser.uid);
 const activeExpenses = () => state.snapshot.expenses.filter(e => e.status !== 'reversed');
-const outstanding = expense => Object.keys(expense.shares).filter(id => id !== expense.payerMemberId).reduce((n,id) => n + remainingFor(expense,id),0);
+const outstanding = expense => expenseDebts(expense).reduce((n,row)=>n+row.amountCents,0);
 const localDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const ledgerDate = () => calendarDate(state.snapshot?.ledger.timeZone);
 const amountText = cents => `${Math.floor(cents/100)}.${String(cents%100).padStart(2,'0')}`;
@@ -123,7 +126,7 @@ async function loadData(preferredId) {
 function syncBlocked(){
   // Foreground loading/recovery owns the report until it finishes. Starting a
   // parallel background read would let an older snapshot overwrite that result.
-  return state.starting||loadingData||saving||Boolean($('#consumption-report[aria-busy="true"]'))||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));
+  return state.starting||loadingData||saving||Boolean($('#budget-form'))||Boolean($('input[data-budget-month][data-editing="true"]'))||Boolean($('#consumption-report[aria-busy="true"]'))||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));
 }
 async function syncChanges(){
   if(!state.store||syncBlocked())return;
@@ -204,7 +207,11 @@ async function renderConsumption(suppliedData){
   const data=suppliedData??(isPersonal?await store.personalConsumption():{projects:[snapshot.ledger],rows:consumptionRows(snapshot),mineRows:consumptionRows(snapshot,{uid:store.currentUser.uid,personal:true})});
   if(!valid())return;
   if(!isPersonal&&reportConfigs.project.ledger!==snapshot.ledger.id)reportConfigs.project={ledger:snapshot.ledger.id,currency:snapshot.ledger.currency};
-  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onInclusion:async(id,included)=>{
+  mountConsumption(target,{data,personal:isPersonal,config:reportConfigs[key],today:localDate(),members:isPersonal?[]:snapshot.members.map(m=>({...m,rows:consumptionRows(snapshot,{memberId:m.id,personal:true})})),onReloadBudgets:async()=> (await store.personalConsumption()).budgets||[],onSaveBudget:async(payload,requestKey)=>{
+    saving++;++reportGeneration;
+    try{await store.savePersonalBudget(payload,requestKey);return (await store.personalConsumption()).budgets||[];}
+    finally{saving--;if(state.store===store)++reportGeneration;autoSync?.wake();}
+  },onBudgetSettled:()=>{if(state.store===store&&state.view==='personal'&&$('#consumption-report')!==target){++reportGeneration;renderConsumption();}},onInclusion:async(id,included)=>{
     saving++;++reportGeneration;
     try{await store.setAnalyticsInclusion(id,included);}
     finally{
@@ -244,12 +251,13 @@ function projectSettings(){
 }
 function myTotals() {
   const id=mine()?.id; let receivable=0,payable=0;
-  for (const e of activeExpenses()) {if (e.payerMemberId===id) receivable+=outstanding(e);else if (id) payable+=remainingFor(e,id);}
+  for(const e of activeExpenses())for(const debt of expenseDebts(e)){if(debt.toMemberId===id)receivable+=debt.amountCents;if(debt.fromMemberId===id)payable+=debt.amountCents;}
   return {receivable,payable};
 }
 function statusFor(e) {
   if (e.status==='reversed') return `<span class="badge neutral">${t('已撤销')}</span>`;
   if (outstanding(e)===0) return `<span class="badge success">${t('已结清')}</span>`;
+  if (expenseDebts(e).some(d=>d.fromMemberId===e.payerMemberId)) return `<span class="badge pending">${t('退款后待结清')}</span>`;
   if (Object.values(e.repaid || {}).some(v=>v>0)) return `<span class="badge pending">${t('部分已还')}</span>`;
   return `<span class="badge neutral">${t('待结清')}</span>`;
 }
@@ -257,8 +265,9 @@ function expenseRows(list) {
   if (!list.length) return empty(t('这里还没有账单'),t('记下第一笔共同开销，分摊结果会清楚列出来。'),newExpenseButton());
   return `<div class="expense-list">${list.map(e=>{
     const id=mine()?.id;
-    const relation=e.status==='reversed'?t('已撤销'):e.payerMemberId===id?`${t('待收')} ${money(outstanding(e))}`:id&&e.shares[id]!==undefined?`${t('我待付')} ${money(remainingFor(e,id))}`:t('账本成员可见');
-    return `<button class="expense-row" data-expense="${escape(e.id)}"><span class="expense-icon">${icon('receipt')}</span><span class="expense-info"><span class="expense-title">${escape(e.title)} ${statusFor(e)}</span><span class="expense-meta">${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} · ${escape(dateText(e.date))} · ${t('{count}人参与', {count:Object.keys(e.shares).length})}</span></span><span class="expense-amount"><strong>${money(e.amountCents)}</strong><small>${relation}</small></span>${icon('arrow')}</button>`;
+    const debts=expenseDebts(e),incoming=debts.filter(d=>d.toMemberId===id).reduce((n,d)=>n+d.amountCents,0),outgoing=debts.filter(d=>d.fromMemberId===id).reduce((n,d)=>n+d.amountCents,0);
+    const relation=e.status==='reversed'?t('已撤销'):[incoming?`${t('待收')} ${money(incoming)}`:'',outgoing?`${t('我待付')} ${money(outgoing)}`:''].filter(Boolean).join(' · ')||t('已结清');
+    return `<button class="expense-row" data-expense="${escape(e.id)}"><span class="expense-icon">${icon('receipt')}</span><span class="expense-info"><span class="expense-title">${escape(e.title)} ${statusFor(e)}</span><span class="expense-meta">${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} · ${escape(dateText(e.date))} · ${t('{count}人参与', {count:Object.keys(e.shares).length})}</span></span><span class="expense-amount"><strong>${money(netExpenseAmount(e))}</strong><small>${relation}</small></span>${icon('arrow')}</button>`;
   }).join('')}</div>`;
 }
 const createdTime = value => value?.toMillis ? value.toMillis() : Date.parse(value) || 0;
@@ -272,8 +281,8 @@ function overview() {
   const effective=paymentGroups(sortedPayments()).filter(p=>p.type==='payment'&&!p.reversedBy).slice(0,3);
   const memberList=s.members.slice(0,4).map(m=>`<div class="member-row">${avatar(m.name)}<div class="member-info"><strong>${escape(m.name)}${m.uid===state.store.currentUser.uid?` <span class="me-label">${t('我')}</span>`:''}</strong><small>${m.uid?t('已加入'):t('临时成员')}</small></div><span class="member-amount">${balanceLabel(m.id)}</span></div>`).join('');
   return heading(escape(s.ledger.title),[t(projectTypes[s.ledger.projectType||'general']),s.ledger.activityStatus==='ended'?t('活动已结束'):null,[s.ledger.startDate,s.ledger.endDate].filter(Boolean).join(' — '),t('{count}位成员',{count:s.members.length})].filter(Boolean).map(escape).join(' · '),`<button class="button secondary" data-view="project-stats">${icon('chart')}${t('项目统计')}</button>`+newExpenseButton())+
-    `<dl class="project-totals"><div><dt>${t('项目总开销')}</dt><dd>${money(checkedSum(active.map(e=>e.amountCents)))}</dd></div><div><dt>${t('我的实际消费')}</dt><dd>${money(mineSpent)}</dd></div><div><dt>${t('我先付了')}</dt><dd>${money(paid)}</dd></div></dl>`+
-    `<section class="pending-tasks" id="pending-tasks" hidden></section><div class="overview-grid"><div class="main-column"><section class="balance-strip" aria-label="${t('我的待收待付')}"><div class="balance-block"><span class="balance-label">${t('待收回')}</span><strong class="balance-amount amount-in">${money(totals.receivable)}</strong><span class="balance-note">${t('已垫付，等待伙伴还款')}</span></div><div class="balance-block"><span class="balance-label">${t('待支付')}</span><strong class="balance-amount">${money(totals.payable)}</strong><span class="balance-note">${t('确认转账后，由收款人记一笔')}</span></div><div class="balance-footer"><button class="text-link" data-view="settlements">${t('查看结算')} ${icon('arrow')}</button></div></section>
+    `<dl class="project-totals"><div><dt>${t('项目总开销')}</dt><dd>${money(checkedSum(active.map(netExpenseAmount)))}</dd></div><div><dt>${t('我的实际消费')}</dt><dd>${money(mineSpent)}</dd></div><div><dt>${t('我先付了')}</dt><dd>${money(paid)}</dd></div></dl>`+
+    `<section class="pending-tasks" id="pending-tasks" hidden></section><div class="overview-grid"><div class="main-column"><section class="balance-strip" aria-label="${t('我的待收待付')}"><div class="balance-block"><span class="balance-label">${t('待收回')}</span><strong class="balance-amount amount-in">${money(totals.receivable)}</strong><span class="balance-note">${t('等待伙伴转账')}</span></div><div class="balance-block"><span class="balance-label">${t('待支付')}</span><strong class="balance-amount">${money(totals.payable)}</strong><span class="balance-note">${t('确认转账后，由收款人记一笔')}</span></div><div class="balance-footer"><button class="text-link" data-view="settlements">${t('查看结算')} ${icon('arrow')}</button></div></section>
     <section class="panel"><div class="section-heading"><h2>${t('最近账单')}</h2><button class="text-link" data-view="expenses">${t('查看全部')} ${icon('arrow')}</button></div>${expenseRows(sortedExpenses().slice(0,5))}</section>
     <section class="panel-quiet"><div class="section-heading"><h2>${t('最近还款')}</h2><button class="text-link" data-view="settlements">${t('全部记录')}</button></div>${effective.length?effective.map(p=>`<div class="activity-row"><span class="activity-icon">${icon('check')}</span><div><strong>${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))}</strong><small>${escape(dateText(p.date))} ${t('· 已确认收款')}</small></div><strong>${money(p.amountCents)}</strong></div>`).join(''):`<p class="muted">${t('第一笔收款确认后，记录会出现在这里。')}</p>`}</section></div>
     <aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('成员净余额')}</h2><span class="count-label">${t('{count}人', {count:s.members.length})}</span></div>${memberList}<button class="button secondary full-width" data-view="members">${icon('people')}${t('管理成员与邀请')}</button></section><section class="share-panel"><span class="share-symbol">${icon('share')}</span><h2>${t('一张清单，把账说明白。')}</h2><p>${t('把待结清的金额整理好，分享给一起消费的伙伴。')}</p><button class="button secondary" data-action="share">${t('预览结算单')} ${icon('arrow')}</button></section></aside></div>`;
@@ -348,8 +357,8 @@ function settlementsView() {
   const groups=settlementGroups(activeExpenses()).filter(g=>all||g.fromMemberId===myId||g.toMemberId===myId).sort((a,b)=>Number(b.fromMemberId===myId)-Number(a.fromMemberId===myId)),payments=paymentGroups(sortedPayments()).filter(p=>all||p.fromMemberId===myId||p.toMemberId===myId);
   return heading(t('结清一笔，轻松一分。'),t('还款记录保留在这里，来龙去脉都能查到。'),`<button class="button secondary" data-action="my-statement">${icon('share')}${t('我的结算单')}</button><button class="text-link" data-action="share">${t('分享结算单')}</button>${newExpenseButton()}`)+
     `<div class="settlement-scope" role="group" aria-label="${t('统计口径')}">${[['mine','我的往来'],['all','全部往来']].map(([id,label])=>`<button class="chip ${(all?id==='all':id==='mine')?'active':''}" data-settlement-scope="${id}" aria-pressed="${all?id==='all':id==='mine'}">${t(label)}</button>`).join('')}</div>`+
-    `<div class="overview-grid"><div class="main-column"><section class="panel"><div class="section-heading"><h2>${t('待结清')}</h2><span class="count-label">${t('{count}笔往来',{count:groups.length})}</span></div>${groups.length?groups.map((group,index)=>`${!all&&(index===0||(groups[index-1].fromMemberId===myId)!==(group.fromMemberId===myId))?`<h3>${t(group.fromMemberId===myId?'我要付给谁':'谁需要付给我')}</h3>`:''}<div class="settlement-group"><div class="settlement-row">${avatar(memberName(group.fromMemberId))}<div class="member-info"><strong>${escape(memberName(group.fromMemberId))} → ${escape(memberName(group.toMemberId))}</strong><small>${t('{count}笔账单',{count:group.expenses.length})}</small></div><strong class="settlement-amount">${money(group.totalCents)}</strong>${canReceive(group.expenses[0])?`<button class="button secondary small-button" data-batch-from="${escape(group.fromMemberId)}" data-batch-to="${escape(group.toMemberId)}">${t('记录收款')}</button>`:`<span class="badge neutral">${t('待收款人确认')}</span>`}</div><details><summary>${t('查看明细')}</summary>${group.expenses.map(e=>`<div class="settlement-line"><button class="text-link" data-expense="${escape(e.id)}">${escape(e.title)}</button><span>${escape(dateText(e.date))}</span><strong>${money(e.remainingCents)}</strong></div>`).join('')}</details></div>`).join(''):empty(t(all?'这个账本已经结清':'没有未结清的往来。'),all?t('每一笔共同开销都已对上。'):'')}</section>
-    <section class="panel-quiet"><div class="section-heading"><h2>${t('还款流水')}</h2><span class="count-label">${t('{count}条记录',{count:payments.length})}</span></div>${payments.length?payments.map(p=>{const e=state.snapshot.expenses.find(e=>e.id===p.expenseId);return `<div class="payment-record"><div class="journal-row"><div><strong>${p.type==='reversal'?t('撤销收款'):`${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))}`}</strong><small>${escape(dateText(p.date))} · ${t('{count}笔账单',{count:p.entries.length})}${p.type==='payment'&&p.note?' · '+escape(p.note):''}</small></div><strong>${p.type==='reversal'?'−':''}${money(p.amountCents)}</strong>${p.reversedBy?`<span class="badge neutral">${t('已撤销')}</span>`:p.type==='payment'&&e&&canReceive(e)?`<button class="text-link" ${p.batchId?'data-reverse-batch':'data-reverse-payment'}="${escape(p.id)}">${t('撤销')}</button>`:''}</div><details><summary>${t('查看抵扣明细')}</summary>${p.entries.map(row=>`<div class="settlement-line"><button class="text-link" data-expense="${escape(row.expenseId)}">${escape(state.snapshot.expenses.find(e=>e.id===row.expenseId)?.title||t('账单'))}</button><strong>${money(row.amountCents)}</strong></div>`).join('')}</details></div>`;}).join(''):`<p class="muted">${t('记录部分或全部收款后，会生成一条可追溯的流水。')}</p>`}</section></div><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('成员净余额')}</h2></div>${state.snapshot.members.map(m=>`<div class="member-row">${avatar(m.name)}<div class="member-info"><button class="text-link" data-member-detail="${escape(m.id)}">${escape(m.name)}</button></div><span class="member-amount">${balanceLabel(m.id)}</span></div>`).join('')}<p class="form-hint">${t('净余额用于核对，不会自动抵扣双方的原始账单。')}</p></section></aside></div>`;
+    `<div class="overview-grid"><div class="main-column"><section class="panel"><div class="section-heading"><h2>${t('待结清')}</h2><span class="count-label">${t('{count}笔往来',{count:groups.length})}</span></div>${groups.length?groups.map((group,index)=>`${!all&&(index===0||(groups[index-1].fromMemberId===myId)!==(group.fromMemberId===myId))?`<h3>${t(group.fromMemberId===myId?'我要付给谁':'谁需要付给我')}</h3>`:''}<div class="settlement-group"><div class="settlement-row">${avatar(memberName(group.fromMemberId))}<div class="member-info"><strong>${escape(memberName(group.fromMemberId))} → ${escape(memberName(group.toMemberId))}</strong><small>${t('{count}笔账单',{count:group.expenses.length})}</small></div><strong class="settlement-amount">${money(group.totalCents)}</strong>${canReceive(group.expenses[0],group.toMemberId)?`<button class="button secondary small-button" data-batch-from="${escape(group.fromMemberId)}" data-batch-to="${escape(group.toMemberId)}">${t('记录收款')}</button>`:`<span class="badge neutral">${t('待收款人确认')}</span>`}</div><details><summary>${t('查看明细')}</summary>${group.expenses.map(e=>`<div class="settlement-line"><button class="text-link" data-expense="${escape(e.id)}">${escape(e.title)}</button><span>${escape(dateText(e.date))}</span><strong>${money(e.remainingCents)}</strong></div>`).join('')}</details></div>`).join(''):empty(t(all?'这个账本已经结清':'没有未结清的往来。'),all?t('每一笔共同开销都已对上。'):'')}</section>
+    <section class="panel-quiet"><div class="section-heading"><h2>${t('还款流水')}</h2><span class="count-label">${t('{count}条记录',{count:payments.length})}</span></div>${payments.length?payments.map(p=>{const e=state.snapshot.expenses.find(e=>e.id===p.expenseId);return `<div class="payment-record"><div class="journal-row"><div><strong>${p.type==='reversal'?t('撤销收款'):`${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))}`}</strong><small>${escape(dateText(p.date))} · ${t('{count}笔账单',{count:p.entries.length})}${p.type==='payment'&&p.note?' · '+escape(p.note):''}</small></div><strong>${p.type==='reversal'?'−':''}${money(p.amountCents)}</strong>${p.reversedBy?`<span class="badge neutral">${t('已撤销')}</span>`:p.type==='payment'&&e&&canReceive(e,p.toMemberId)?`<button class="text-link" ${p.batchId?'data-reverse-batch':'data-reverse-payment'}="${escape(p.id)}">${t('撤销')}</button>`:''}</div><details><summary>${t('查看抵扣明细')}</summary>${p.entries.map(row=>`<div class="settlement-line"><button class="text-link" data-expense="${escape(row.expenseId)}">${escape(state.snapshot.expenses.find(e=>e.id===row.expenseId)?.title||t('账单'))}</button><strong>${money(row.amountCents)}</strong></div>`).join('')}</details></div>`;}).join(''):`<p class="muted">${t('记录部分或全部收款后，会生成一条可追溯的流水。')}</p>`}</section></div><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('成员净余额')}</h2></div>${state.snapshot.members.map(m=>`<div class="member-row">${avatar(m.name)}<div class="member-info"><button class="text-link" data-member-detail="${escape(m.id)}">${escape(m.name)}</button></div><span class="member-amount">${balanceLabel(m.id)}</span></div>`).join('')}<p class="form-hint">${t('净余额用于核对，不会自动抵扣双方的原始账单。')}</p></section></aside></div>`;
 }
 function membersView() {
   const claims=(state.snapshot.claims || []).filter(c=>c.status==='pending'&&state.snapshot.invites.some(i=>i.id===c.inviteToken&&i.status==='open'&&Date.parse(i.expiresAt)>Date.now()));
@@ -461,27 +470,41 @@ ${shares}`;
 
 function expenseExtras(expense) {
   const items=expense.items || [],attachments=receiptMarkup(expense.receipts);
-  return `<p class="form-hint">${t('分类')} · ${t(categories[expense.category||'uncategorized'])}</p>${expense.sourceDate?`<p class="form-hint">${t('周期账单 · {date}',{date:escape(expense.sourceDate)})}</p>`:''}${items.length?`<section class="detail-items"><h3>${t('消费明细')}</h3>${items.map(item=>`<div class="detail-item"><strong>${escape(item.title)}</strong><strong>${money(item.amountCents)}</strong><small>${t(categories[item.category??expense.category??'uncategorized'])} · ${item.memberIds.map(id=>escape(memberName(id))).join('、')}</small></div>`).join('')}</section>`:''}${expense.note?`<section class="detail-note"><h3>${t('备注')}</h3><p>${escape(expense.note)}</p></section>`:''}${attachments?`<section class="receipt-gallery"><h3>${t('收据')}</h3>${attachments}</section>`:''}`;
+  return `<p class="form-hint">${t('分类')} · ${t(categories[expense.category||'uncategorized'])}</p>${expense.sourceDate?`<p class="form-hint">${t('周期账单 · {date}',{date:escape(expense.sourceDate)})}</p>`:''}${items.length?`<section class="detail-items"><h3>${t(expense.refunds?.length?'原消费明细':'消费明细')}</h3>${items.map(item=>`<div class="detail-item"><strong>${escape(item.title)}</strong><strong>${money(item.amountCents)}</strong><small>${t(categories[item.category??expense.category??'uncategorized'])} · ${item.memberIds.map(id=>escape(memberName(id))).join('、')}</small></div>`).join('')}</section>`:''}${expense.note?`<section class="detail-note"><h3>${t('备注')}</h3><p>${escape(expense.note)}</p></section>`:''}${attachments?`<section class="receipt-gallery"><h3>${t('收据')}</h3>${attachments}</section>`:''}`;
 }
 function showExpense(id) {
   const e=state.snapshot.expenses.find(e=>e.id===id);if(!e)return;
-  const pending=state.snapshot.members.map(m=>paymentSubmission(state.store,state.snapshot.ledger.id,e.id,m.id).pending).filter(Boolean);
-  const pendingMarkup=pending.map(({payload:p})=>`<div class="payment-record"><p>${t('上次收款结果待核实')} · ${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))} · ${money(p.amountCents)}</p><button class="button secondary" data-payment="${escape(e.id)}" data-member="${escape(p.fromMemberId)}">${t('核实上次收款')}</button></div>`).join('');
-  const shares=Object.entries(consumptionShares(e)).map(([id,cents])=>{const isPayer=id===e.payerMemberId,remaining=remainingFor(e,id),paid=e.repaid?.[id]||0;return `<div class="member-row">${avatar(memberName(id))}<div class="member-info"><strong>${escape(memberName(id))}${isPayer?t(' · 垫付人'):''}</strong><small>${isPayer?t('自己的消费份额'):paid?`${t('已还')} ${money(paid)}`:t('尚未还款')}</small></div><div class="expense-amount"><strong>${money(cents)}</strong><small>${isPayer?t('自付'):`${t('待付')} ${money(remaining)}`}</small></div>${!pending.some(row=>row.payload.fromMemberId===id)&&!isPayer&&remaining>0&&e.status==='active'&&canReceive(e)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(id)}">${t('收款')}</button>`:''}</div>`;}).join('');
-  openDialog(escape(e.title),`<div class="detail-amount">${money(e.amountCents)}</div><div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><div class="section-heading"><h3>${t('每个人的份额')}</h3></div>${shares}${pendingMarkup}${expenseExtras(e)}${errorSlot()}`,`${archived()?'':`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>`}<button class="text-link" data-expense-history="${escape(e.id)}">${t('操作历史')}</button>${e.status==='active'&&canReceive(e)?`<button class="button secondary" data-edit-expense="${escape(e.id)}">${t('补充与更正')}</button>`:''}${e.status==='active'&&canReceive(e)?`<button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
+  const ledgerId=state.snapshot.ledger.id;
+  const pending=[...state.snapshot.members.map(m=>paymentSubmission(state.store,ledgerId,e.id,m.id).pending),...state.snapshot.members.filter(m=>m.id!==e.payerMemberId).map(m=>paymentSubmission(state.store,ledgerId,e.id,e.payerMemberId,'recordPayment',m.id).pending)].filter(Boolean);
+  const pendingMarkup=pending.map(({payload:p})=>`<div class="payment-record"><p>${t('上次收款结果待核实')} · ${escape(memberName(p.fromMemberId))} → ${escape(memberName(p.toMemberId))} · ${money(p.amountCents)}</p><button class="button secondary" data-payment="${escape(e.id)}" data-member="${escape(p.fromMemberId)}" ${p.fromMemberId===e.payerMemberId?`data-to="${escape(p.toMemberId)}"`:''}>${t('核实上次收款')}</button></div>`).join('');
+  const shares=Object.entries(consumptionShares(e)).map(([memberId,cents])=>`<div class="member-row">${avatar(memberName(memberId))}<div class="member-info"><strong>${escape(memberName(memberId))}${memberId===e.payerMemberId?t(' · 垫付人'):''}</strong><small>${t('实际承担')}</small></div><strong>${money(cents)}</strong></div>`).join('');
+  const debts=expenseDebts(e).map(d=>`<div class="member-row"><div class="member-info"><strong>${escape(memberName(d.fromMemberId))} → ${escape(memberName(d.toMemberId))}</strong><small>${t(d.fromMemberId===e.payerMemberId?'退款返还':'待付')}</small></div><strong>${money(d.amountCents)}</strong>${!pending.some(p=>p.payload.fromMemberId===d.fromMemberId&&p.payload.toMemberId===d.toMemberId)&&canReceive(e,d.toMemberId)?`<button class="button secondary small-button" data-payment="${escape(e.id)}" data-member="${escape(d.fromMemberId)}" ${d.fromMemberId===e.payerMemberId?`data-to="${escape(d.toMemberId)}"`:''}>${t('记录收款')}</button>`:''}</div>`).join('');
+  const refunds=(e.refunds||[]).map(r=>`<div class="payment-record"><div class="journal-row"><div><strong>${escape(r.date)} · ${t('商家退款')} ${r.status==='reversed'?`<span class="badge neutral">${t('已撤销')}</span>`:''}</strong><small>${t('退款收款人')} ${escape(memberName(r.toMemberId))}${r.note?' · '+escape(r.note):''}</small></div><strong>${money(r.amountCents)}</strong>${r.status==='active'&&canReceive(e)?`<button class="text-link" data-reverse-refund="${escape(r.id)}" data-refund-expense="${escape(e.id)}">${t('撤销')}</button>`:''}</div><p>${Object.entries(r.benefits).filter(([,v])=>v).map(([key,v])=>`${escape(memberName(key))} −${money(v)}`).join(' · ')}</p></div>`).join('');
+  const pendingRefund=paymentSubmission(state.store,ledgerId,e.id,'refund','recordRefund').pending;
+  openDialog(escape(e.title),`${e.refunds?.length?`<p class="detail-meta">${t('净消费')}</p>`:''}<div class="detail-amount">${money(netExpenseAmount(e))}</div>${e.refunds?.length?`<p class="detail-meta">${t('原消费')} ${money(e.amountCents)} · ${t('累计退款')} ${money(refundedTotal(e))}</p>`:''}<div class="detail-meta">${escape(dateText(e.date))} · ${t('{name}垫付',{name:escape(memberName(e.payerMemberId))})} ${statusFor(e)}</div><h3>${t('每个人的份额')}</h3>${shares}${debts?`<h3>${t('待结清')}</h3>${debts}`:''}${pendingMarkup}${pendingRefund?`<p role="status">${t('退款保存结果待核实，请核实后再记录下一笔。')}</p>`:''}${refunds?`<h3>${t('退款记录')}</h3>${refunds}`:''}${expenseExtras(e)}${errorSlot()}`,`${archived()?'':`<button class="text-link" data-template-from-expense="${escape(e.id)}">${t('存为模板')}</button>`}<button class="text-link" data-expense-history="${escape(e.id)}">${t('操作历史')}</button>${e.status==='active'&&canReceive(e)?`<button class="button secondary" data-refund="${escape(e.id)}" ${!pendingRefund&&netExpenseAmount(e)===0?'disabled':''}>${t(pendingRefund?'核实上次退款':'记录退款')}</button><button class="button secondary" data-edit-expense="${escape(e.id)}">${t('补充与更正')}</button><button class="text-link danger-link" data-reverse-expense="${escape(e.id)}">${t('撤销这笔账单')}</button>`:''}<button class="button secondary" data-action="close-dialog">${t('完成')}</button>`);
   dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showExpense(id);$('.dialog-body').scrollTop=top;};
+}
+function refundDialog(expenseId){
+  const expense=state.snapshot.expenses.find(e=>e.id===expenseId);if(!expense||!canReceive(expense)||expense.status!=='active')return;
+  openRefundEditor({store:state.store,snapshot:state.snapshot,expenseId,openDialog,submitForm,onSaved:finishSave,today:localDate()});
+}
+function reverseRefundDialog(expenseId,refundId){
+  const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e||!canReceive(e))return;
+  const ledgerId=state.snapshot.ledger.id;
+  openDialog(t('撤销退款记录'),`<form id="refund-reversal-form"><p>${t('撤销后重新计算消费和待结往来，已发生的成员转账保留。')}</p><label class="form-field"><span class="field-label">${t('撤销原因')}</span><input class="form-input" name="reason" maxlength="300" required autofocus></label>${errorSlot()}<div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认撤销')}</button></div></form>`);
+  document.querySelector('#refund-reversal-form').addEventListener('submit',event=>submitForm(event,async data=>{await state.store.reverseRefund(ledgerId,expenseId,{refundId,expectedVersion:e.version||1,reason:data.get('reason')});await finishSave(t('退款记录已撤销。'));}));
 }
 function showHistory(id) {
   openDialog(t('操作历史'),historyMarkup(state.snapshot,id),`<button class="button secondary" data-expense="${escape(id)}">${t('返回账单')}</button>`,true);
   $('#action-dialog').classList.add('history-dialog');
   dialogRefresh=()=>{const top=$('.dialog-body').scrollTop;showHistory(id);$('.dialog-body').scrollTop=top;};
 }
-function paymentDialog(expenseId,fromId) {
-  const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingFor(e,fromId);
-  const reviewOf=row=>({toMemberId:row.payerMemberId,expectedVersion:row.version||1,expectedRemaining:row.status==='reversed'?0:remainingFor(row,fromId)});
+function paymentDialog(expenseId,fromId,toId) {
+  const e=state.snapshot.expenses.find(e=>e.id===expenseId);if(!e)return;const remaining=remainingBetween(e,fromId,toId||e.payerMemberId);
+  const reviewOf=row=>({toMemberId:toId||row.payerMemberId,expectedVersion:row.version||1,expectedRemaining:row.status==='reversed'?0:remainingBetween(row,fromId,toId||row.payerMemberId)});
   const reviewed=reviewOf(e);let displayed=reviewed;
-  const submission=paymentSubmission(state.store,state.snapshot.ledger.id,expenseId,fromId);
-  openDialog(t('确认收到一笔还款'),`<p class="payment-direction" id="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(e.payerMemberId))}</p><p class="muted" id="payment-outstanding">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<label id="payment-review-label" class="form-hint" hidden><input type="checkbox" id="payment-review"> ${t('已核对新的收款人和待收金额')}</label><div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
+  const submission=paymentSubmission(state.store,state.snapshot.ledger.id,expenseId,fromId,'recordPayment',toId);
+  openDialog(t('确认收到一笔还款'),`<p class="payment-direction" id="payment-direction">${escape(memberName(fromId))} <span class="direction-arrow">→</span> ${escape(memberName(toId||e.payerMemberId))}</p><p class="muted" id="payment-outstanding">${escape(e.title)} · ${t('剩余待收 {amount}', {amount:money(remaining)})}</p><form id="payment-form"><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(remaining)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" type="date" name="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120" placeholder="${t('例如：微信转账，先还一部分')}"></label></div><p class="form-hint">${t('只记录已经收到的钱；支持部分还款，不会实际扣款或转账。')}</p>${errorSlot()}<label id="payment-review-label" class="form-hint" hidden><input type="checkbox" id="payment-review"> ${t('已核对新的收款人和待收金额')}</label><div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('确认已收到')}</button></div></form>`);
   const pendingUI=()=>{
     const pending=submission.pending,form=$('#payment-form');
     for(const name of ['amount','date','note'])if(form.elements?.[name]){
@@ -495,7 +518,7 @@ function paymentDialog(expenseId,fromId) {
   dialogRefresh=()=>{
     const latest=state.snapshot.expenses.find(row=>row.id===expenseId);if(!latest)return;
     const next=reviewOf(latest);
-    $('#payment-direction').textContent=`${memberName(fromId)} → ${memberName(latest.payerMemberId)}`;
+    $('#payment-direction').textContent=`${memberName(fromId)} → ${memberName(next.toMemberId)}`;
     $('#payment-outstanding').textContent=`${latest.title} · ${t('剩余待收 {amount}',{amount:money(next.expectedRemaining)})}`;
     if(JSON.stringify(next)!==JSON.stringify(displayed)){$('#payment-review').checked=false;displayed=next;}
     $('#payment-review-label').hidden=JSON.stringify(displayed)===JSON.stringify(reviewed);
@@ -521,6 +544,7 @@ function showMemberDetail(memberId){
   const totals=memberBalances(state.snapshot).find(row=>row.memberId===memberId),groups=settlementGroups(activeExpenses()).filter(row=>row.fromMemberId===memberId||row.toMemberId===memberId);
   const incoming=groups.filter(row=>row.toMemberId===memberId).reduce((n,row)=>n+row.totalCents,0),outgoing=groups.filter(row=>row.fromMemberId===memberId).reduce((n,row)=>n+row.totalCents,0);
   const metrics=[[t('实际承担'),totals.shareCents],[t('已垫付'),totals.paidCents],[t('已收回'),totals.receivedCents],[t('已偿还'),totals.repaidCents],[t('待收回'),incoming],[t('待支付'),outgoing]];
+  const merchantRefunds=activeExpenses().filter(e=>e.payerMemberId===memberId).reduce((n,e)=>n+refundedTotal(e),0);if(merchantRefunds)metrics.splice(2,0,[t('已收商家退款'),merchantRefunds]);
   openDialog(t('{name}的账目',{name:escape(m.name)}),`<dl class="member-totals">${metrics.map(([label,value])=>`<div><dt>${label}</dt><dd>${money(value)}</dd></div>`).join('')}</dl><h3>${t('与伙伴的往来')}</h3>${groups.length?groups.map(row=>`<div class="settlement-line"><span>${escape(memberName(row.fromMemberId))} → ${escape(memberName(row.toMemberId))}</span><strong>${money(row.totalCents)}</strong></div>`).join(''):`<p class="muted">${t('没有待结往来')}</p>`}<div class="form-actions">${owner()&&!archived()&&m.uid!==state.snapshot.ledger.ownerUid?`<button class="button secondary" data-member-status="${m.status==='inactive'?'active':'inactive'}" data-member-id="${escape(m.id)}">${m.status==='inactive'?t('恢复成员'):t('停用成员')}</button>`:''}<button class="button primary" id="member-expenses">${t('查看相关账单')}</button></div>`);
   $('#member-expenses').addEventListener('click',()=>{closeDialog();state.view='expenses';state.expenseTab='records';state.search='';state.filter='all';state.expenseFilters={memberId,memberRole:'any',from:'',to:'',status:'all'};location.hash='expenses';render();});
   dialogRefresh=()=>showMemberDetail(memberId);
@@ -529,7 +553,7 @@ function batchPaymentDialog(fromMemberId,toMemberId){
   const store=state.store,ledgerId=state.snapshot.ledger.id;
   let reviewed=structuredClone(state.snapshot),plan=null;
   const group=settlementGroups(reviewed.expenses).find(row=>row.fromMemberId===fromMemberId&&row.toMemberId===toMemberId);
-  if(!group||!canReceive(group.expenses[0]))return;
+  if(!group||!canReceive(group.expenses[0],group.toMemberId))return;
   openDialog(t('确认收到一笔还款'),`<p class="payment-direction">${escape(memberName(fromMemberId))} → ${escape(memberName(toMemberId))}</p><form id="batch-payment-form"><p id="batch-outstanding" class="muted"></p><label class="form-field"><span class="field-label">${t('本次实际收到')}</span><input class="form-input amount-input" name="amount" inputmode="decimal" value="${amountText(group.totalCents)}" required autofocus></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('收款日期')}</span><input class="form-input" name="date" type="date" value="${localDate()}" required></label><label class="form-field"><span class="field-label">${t('备注（选填）')}</span><input class="form-input" name="note" maxlength="120"></label></div><h3>${t('抵扣明细')}</h3><p class="form-hint">${t('按账单日期从早到晚抵扣，确认前请核对。')}</p><div id="batch-plan"></div>${errorSlot()}<div class="form-actions"><button class="button secondary" type="button" data-action="close-dialog">${t('取消')}</button><button type="submit" class="button primary">${t('确认已收到')}</button></div></form>`);
   const form=$('#batch-payment-form'),button=form.querySelector('[type="submit"]');
   const preview=()=>{
@@ -702,7 +726,9 @@ document.addEventListener('click', async event => {
   if (el.dataset.view) {state.view=el.dataset.view;location.hash=state.view;render();window.scrollTo({top:0,behavior:'instant'});return;}
   if (el.dataset.ledger) {await selectLedger(el.dataset.ledger);return;}
   if (el.dataset.expense) {showExpense(el.dataset.expense);return;}
-  if (el.dataset.payment) {paymentDialog(el.dataset.payment,el.dataset.member);return;}
+  if(el.dataset.refund){refundDialog(el.dataset.refund);return;}
+  if(el.dataset.reverseRefund){reverseRefundDialog(el.dataset.refundExpense,el.dataset.reverseRefund);return;}
+  if (el.dataset.payment) {paymentDialog(el.dataset.payment,el.dataset.member,el.dataset.to);return;}
   if (el.dataset.inviteMember) {el.disabled=true;await invitationDialog(el.dataset.inviteMember);el.disabled=false;return;}
   if (el.dataset.filter) {if(el.dataset.filter==='open')state.expenseFilters.status='open';else state.filter=el.dataset.filter;render();return;}
   if(el.dataset.pending){state.view='expenses';state.expenseTab=el.dataset.pending;location.hash='expenses';render();return;}

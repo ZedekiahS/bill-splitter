@@ -26,6 +26,42 @@ JavaScript.
 
 Verification details: [entry flow review](docs/review/entry-flow-2026-11-06.md).
 
+## Linked merchant refunds
+
+Record a partial, full or repeated refund from its original expense. Select the
+whole expense or one item, check the suggested distribution, or enter each person's
+refund share. Refunds currently use the ledger currency and must have reached the
+original payer. Only that payer or the ledger owner records/reverses them.
+
+Original spending and actual member transfers remain intact. Net consumption and
+reports decrease on the original expense date/category. If members already paid,
+the remaining transfer can reverse direction: the original payer returns their
+excess payment, confirmed by the recipient or owner. Partial payments and successive
+refunds recalculate these directions without silently offsetting separate expenses.
+
+Expense detail shows original spending, total refunded, net spending, refund history
+and pending returns. Corrections preserve refund history; refund reversal requires a
+reason. Complete backups include refunds and return transfers. Unknown save results
+retain the original payload and idempotency key when retrying or reopening the form.
+
+Verification: [linked refunds review](docs/review/linked-refunds-2026-11-10.md).
+
+## Personal monthly budget
+
+In **My spending**, optionally set a budget for each month/currency. Only you can
+see it; it is stored separately from shared ledgers. The budget compares with your
+actual net share across included ledgers, not everything you paid upfront. Refunds
+adjust the original spending month; member repayments do not change consumption.
+Click **Spent** to open the matching monthly history. Budgets can be edited or
+removed, and zero is supported. There is no rollover, category budget or deposit flow.
+
+Budget settings synchronize across sessions with version conflicts and idempotent
+retry protection. They are excluded from shared ledger exports; include the
+`bs_personal_budgets` table in full database backups. Run the normal database
+migration when updating an existing installation.
+
+Verification: [monthly budget review](docs/review/monthly-budget-2026-11-10.md).
+
 ## Run the application
 
 The frontend now uses a self-hosted Node.js API and PostgreSQL. Normal account
@@ -70,7 +106,7 @@ They demonstrate the claim and approval flow, not cross-device sharing.
 - Chinese/English interface and settlement statements, with a remembered language
   choice shared by the app and sign-in page. Entered ledger data stays unchanged.
 - Equal, percentage, exact-amount, or itemized splits with a preview before saving; the payer can also
-  participate. Each expense supports up to **8 people sharing the cost**. This
+  participate. Each expense supports up to **50 people sharing the cost**. This
   limit does not restrict the number of members in a ledger.
 - Reusable expense templates, with optional weekly, monthly, or yearly repeats.
   Opening or refreshing a ledger generates due drafts; confirmation records the

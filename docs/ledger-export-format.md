@@ -70,3 +70,23 @@
 JSON 和完整 ZIP 保留这些组合；恢复时为组合与成员重新分配身份，将组合管理权归导入人。
 组合中的成员可以已停用，但不能引用不存在的成员。成员被移除后，组合可能为空；恢复保留
 这种组合，使用前需重新选择成员。CSV 财务表不受组合变动影响。
+
+## 关联退款与返还
+
+- `expenses[].refunds` 为可选数组；旧账本缺省为空。退款记录含 `id,date,amountCents,
+  toMemberId,itemIndex,benefits,allocations,note,status,createdByUid,createdAt`，
+  撤销时另有 `reversedAt,reversedByUid,reverseReason`。`itemIndex` 从 0 开始，
+  `null` 表示整笔账单；`allocations` 固定每个消费项目与成员减少的金额。
+- `amountCents/shares/items` 保留原消费；`repaid` 为有效的成员到原垫付人的付款，
+  可选 `returned` 为原垫付人到成员的有效返还。两种方向均有对应 `payments` 记录，
+  不从退款记录凭空生成实际转账。`history` 新增 `refund/refund-reversed` 类型。
+- `expenses.csv` 末尾新增 `refunded_cents,net_amount_cents`；`shares.csv` 的
+  `share_cents` 为扣除有效退款后的消费份额，并新增 `returned_cents`。
+  `items.csv` 仍保留原消费项目金额。
+- ZIP 新增 `refunds.csv`，包含账单/退款 ID、日期、收款人、金额、状态、备注、
+  受益份额、项目分配、创建人/时间与撤销时间/原因。完整字段与关联以 JSON 为准。
+- 导入重映射退款和成员 ID，核对原消费容量、每次分配合计、有效累计退款以及
+  两个方向的实际付款合计；失败不写入新账本。恢复预览与消费统计使用净消费。
+- 新版本支持无退款的旧备份；含退款的备份应由支持退款的版本恢复，旧应用不保证可读。
+
+个人月度预算为账号私有设置，不属于共同账本，不包含在任何账本 CSV、JSON 或 ZIP 中。完整服务器数据库备份应包含 `bs_personal_budgets` 表。

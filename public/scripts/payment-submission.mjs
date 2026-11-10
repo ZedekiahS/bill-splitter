@@ -3,12 +3,12 @@ import {randomId} from './random-id.mjs';
 // A payment with an unknown result retains its original payload and request key.
 // Session storage also protects closing/reopening the dialog or reloading this tab.
 const pending=new Map();
-export function paymentSubmission(store,ledgerId,expenseId,fromMemberId){
- const identity=JSON.stringify([store.currentUser.uid,ledgerId,expenseId,fromMemberId]),storageKey='bill-splitter.pending-payment:'+identity;
+export function paymentSubmission(store,ledgerId,expenseId,fromMemberId,command='recordPayment',toMemberId){
+ const identity=JSON.stringify([store.currentUser.uid,ledgerId,expenseId,fromMemberId,...(command==='recordPayment'?[]:[command]),...(toMemberId?[toMemberId]:[])]),storageKey='bill-splitter.pending-payment:'+identity;
  let attempt=pending.get(identity)||null;
  if(!attempt&&store.mode==='api')try{
    const saved=JSON.parse(globalThis.sessionStorage?.getItem(storageKey)||'null');
-   if(saved?.key&&saved.payload?.expenseId===expenseId&&saved.payload.fromMemberId===fromMemberId)attempt=saved;
+   if(saved?.key&&saved.payload?.expenseId===expenseId&&(command!=='recordPayment'||saved.payload.fromMemberId===fromMemberId)&&(!toMemberId||saved.payload.toMemberId===toMemberId))attempt=saved;
  }catch{/* In-memory retry protection remains available when storage is blocked. */}
  const persist=value=>{
    attempt=value;if(value)pending.set(identity,value);else pending.delete(identity);
@@ -20,8 +20,8 @@ export function paymentSubmission(store,ledgerId,expenseId,fromMemberId){
      if(!attempt)persist({key:randomId(),payload:structuredClone(payload)});
      try{
        const result=store.mode==='api'
-         ?await store.saveDraftCommand(ledgerId,'recordPayment',[attempt.payload],attempt.key)
-         :await store.recordPayment(ledgerId,attempt.payload);
+         ?await store.saveDraftCommand(ledgerId,command,[attempt.payload],attempt.key)
+         :await store[command](ledgerId,attempt.payload);
        persist(null);return result;
      }catch(error){
        // Authentication, throttling and timeouts cannot establish whether an

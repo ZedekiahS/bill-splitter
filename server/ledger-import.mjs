@@ -2,7 +2,8 @@ import {projectData} from '../public/scripts/expense-analytics.mjs';
 import yauzl from 'yauzl';
 import {randomUUID} from 'node:crypto';
 import {expenseData,text} from '../public/scripts/ledger-domain.mjs';
-import {assertCents,validateDate} from '../public/scripts/ledger-core.mjs';
+import {assertCents,validateDate,originalShares,expensePieces,effectiveRefunds} from '../public/scripts/ledger-core.mjs';
+import {refundData} from '../public/scripts/expense-refunds.mjs';
 import {normalizeSchedule,occurrenceId} from '../public/scripts/expense-features.mjs';
 import {timeZone} from '../public/scripts/ledger-time.mjs';
 import {receiptBlob} from '../public/scripts/receipt-files.mjs';
@@ -47,6 +48,7 @@ export async function readImport(payload){
 export function restoreState({data,files},user,{memberId,title}={}){
  const members=list(data.members),expenses=list(data.expenses),payments=list(data.payments),templates=list(data.templates||[]),occurrences=list(data.occurrences||[]);
  if(!members.length)invalid();const memberMap=mapping(members),expenseMap=mapping(expenses),paymentMap=mapping(payments),templateMap=mapping(templates),batchMap=new Map();
+ const refundMap=mapping(expenses.flatMap(e=>list(e.refunds||[])));
  if(!memberMap.has(memberId))throw new Error('请选择导入账本中代表你自己的成员。');
  const oldUid=members.find(m=>m.id===memberId).uid,actor=uid=>uid&&uid===oldUid?user.uid:uid?'imported:'+String(uid).slice(0,200):null;
  const id=randomUUID(),now=new Date().toISOString(),state={ledgers:{},members:{[id]:{}},expenses:{[id]:{}},payments:{[id]:{}},templates:{[id]:{}},occurrences:{[id]:{}},invites:{},claims:{}};
@@ -75,7 +77,22 @@ export function restoreState({data,files},user,{memberId,title}={}){
   const activeMembers=Object.fromEntries(Object.entries(state.members[id]).map(([key,m])=>[key,{...m,status:'active'}]));
   const result=expenseData({...payload,receipts:[]},activeMembers,user.uid,now);result.receipts=payload.receipts;
   if(!['active','reversed'].includes(e.status))invalid();result.status=e.status;
-  result.repaid=Object.fromEntries(Object.entries(shares).map(([key,cents])=>{const old=[...memberMap].find(([,value])=>value===key)[0],paid=assertCents(e.repaid?.[old]||0,true);if(paid>cents||key===result.payerMemberId&&paid||e.status==='reversed'&&paid)invalid();return [key,paid];}));
+  if(e.returned){result.returned=Object.fromEntries(Object.entries(e.returned).map(([key,value])=>{const member=mapped(memberMap,key);if(member===result.payerMemberId||!Object.hasOwn(originalShares(result),member))invalid();return [member,assertCents(value,true)];}));}
+  result.repaid=Object.fromEntries(Object.entries(shares).map(([key,cents])=>{const old=[...memberMap].find(([,value])=>value===key)[0],paid=assertCents(e.repaid?.[old]||0,true);if(BigInt(paid)>BigInt(cents)+BigInt(result.returned?.[key]||0)||key===result.payerMemberId&&paid||e.status==='reversed'&&paid)invalid();return [key,paid];}));
+  if(e.refunds){
+   const ids=new Set();result.refunds=list(e.refunds).map(r=>{
+    const rid=mapped(refundMap,r.id);if(ids.has(rid)||!['active','reversed'].includes(r.status))invalid();ids.add(rid);
+    const benefits=Object.fromEntries(Object.entries(r.benefits||{}).map(([key,v])=>[mapped(memberMap,key),v]));
+    const clean=refundData({...result,status:'active',refunds:[]},{...r,toMemberId:mapped(memberMap,r.toMemberId),benefits});
+    const allocations=list(r.allocations,400).map(row=>({itemIndex:row.itemIndex,memberId:mapped(memberMap,row.memberId),amountCents:assertCents(row.amountCents)}));
+    const sums={},keys=new Set(),pieces=expensePieces({...result,refunds:[]});
+    for(const row of allocations){const key=JSON.stringify([row.itemIndex,row.memberId]),piece=pieces.find(p=>p.itemIndex===row.itemIndex);if(keys.has(key)||!piece||row.amountCents>(piece.shares[row.memberId]||0)||clean.itemIndex!==null&&row.itemIndex!==clean.itemIndex)invalid();keys.add(key);sums[row.memberId]=(sums[row.memberId]||0)+row.amountCents;}
+    if(Object.keys(sums).some(key=>!Object.hasOwn(benefits,key))||Object.entries(benefits).some(([key,v])=>(sums[key]||0)!==v))invalid();
+    return {...clean,id:rid,allocations,status:r.status,createdByUid:actor(r.createdByUid),createdAt:instant(r.createdAt),...(r.status==='reversed'?{reversedAt:instant(r.reversedAt),reversedByUid:actor(r.reversedByUid),reverseReason:text(r.reverseReason,'撤销原因',300)}:{})};
+   });
+   expensePieces(result);if(result.status==='reversed'&&effectiveRefunds(result).length)invalid();
+  }
+  if(Object.values(result.returned||{}).some(Boolean)&&(!result.refunds?.length||result.status==='reversed'))invalid();
   return result;
  }
  const batch=id=>{if(!id)return null;if(typeof id!=='string')invalid();if(!batchMap.has(id))batchMap.set(id,randomUUID());return batchMap.get(id);};
@@ -83,13 +100,16 @@ export function restoreState({data,files},user,{memberId,title}={}){
   const result=version(e);if(!Number.isSafeInteger(e.version||1)||(e.version||1)<1)invalid();
   Object.assign(result,{createdByUid:actor(e.createdByUid),createdAt:instant(e.createdAt),version:e.version||1,updatedAt:e.updatedAt?instant(e.updatedAt):null,reversedAt:e.reversedAt?instant(e.reversedAt):null,lastPaymentId:mapped(paymentMap,e.lastPaymentId,true),sourceTemplateId:mapped(templateMap,e.sourceTemplateId,true),sourceDate:e.sourceDate?validateDate(e.sourceDate):null});
   result.history=list(e.history||[]).map(h=>{
-   if(!['created','updated','payment','payment-reversed','reversed'].includes(h.type))invalid();
+   if(!['created','updated','payment','payment-reversed','reversed','refund','refund-reversed'].includes(h.type))invalid();
    const row={id:randomUUID(),type:h.type,actorUid:actor(h.actorUid),actorName:h.actorName==null?null:text(h.actorName,'成员名字',120),at:instant(h.at)};
    for(const key of ['reason','note'])if(h[key]!=null){if(typeof h[key]!=='string'||h[key].length>1000)invalid();row[key]=h[key];}
    if(h.type==='updated'&&(!h.before||!h.after)||h.before&&!h.after)invalid();
    for(const key of ['before','after'])if(h[key])row[key]=expenseVersion(version(h[key]));
    for(const key of ['fromMemberId','toMemberId'])if(h[key])row[key]=mapped(memberMap,h[key]);
    if(h.paymentId)row.paymentId=mapped(paymentMap,h.paymentId);if(h.batchId)row.batchId=batch(h.batchId);if(h.amountCents!=null)row.amountCents=assertCents(h.amountCents);
+   if(h.refundId){if(!e.refunds?.some(r=>r.id===h.refundId))invalid();row.refundId=mapped(refundMap,h.refundId);}
+   if(h.benefits)row.benefits=Object.fromEntries(Object.entries(h.benefits).map(([key,v])=>[mapped(memberMap,key),assertCents(v,true)]));
+   if(h.date)row.date=validateDate(h.date);
    return row;
   });state.expenses[id][expenseMap.get(e.id)]=result;
  }
@@ -97,18 +117,20 @@ export function restoreState({data,files},user,{memberId,title}={}){
   if(!['payment','reversal'].includes(p.type))invalid();
   state.payments[id][paymentMap.get(p.id)]={expenseId:mapped(expenseMap,p.expenseId),fromMemberId:mapped(memberMap,p.fromMemberId),toMemberId:mapped(memberMap,p.toMemberId),amountCents:assertCents(p.amountCents),date:validateDate(p.date),note:String(p.note||'').slice(0,300),type:p.type,reversesId:mapped(paymentMap,p.reversesId,true),reversedBy:mapped(paymentMap,p.reversedBy,true),createdByUid:actor(p.createdByUid),createdAt:instant(p.createdAt),...(p.batchId?{batchId:batch(p.batchId)}:{}),...(p.reversesBatchId?{reversesBatchId:batch(p.reversesBatchId)}:{})};
  }
- const paid=new Map();
+ const paid=new Map(),returned=new Map();
  for(const [key,p]of Object.entries(state.payments[id])){
   if(p.type==='payment'&&p.reversesId||p.type==='reversal'&&p.reversedBy)invalid();
   if(p.type==='reversal'){
    const original=state.payments[id][p.reversesId];if(!original||original.type!=='payment'||original.reversedBy!==key||['expenseId','fromMemberId','toMemberId','amountCents'].some(k=>original[k]!==p[k]))invalid();
   }else if(p.reversedBy){if(state.payments[id][p.reversedBy]?.type!=='reversal'||state.payments[id][p.reversedBy]?.reversesId!==key)invalid();}
   else{
-   const e=state.expenses[id][p.expenseId];if(e.status!=='active'||e.payerMemberId!==p.toMemberId||p.fromMemberId===p.toMemberId||!Object.hasOwn(e.shares,p.fromMemberId))invalid();
-   const token=p.expenseId+':'+p.fromMemberId;paid.set(token,(paid.get(token)||0n)+BigInt(p.amountCents));
+   const e=state.expenses[id][p.expenseId],isReturn=p.fromMemberId===e.payerMemberId,member=isReturn?p.toMemberId:p.fromMemberId;
+   if(e.status!=='active'||p.fromMemberId===p.toMemberId||!Object.hasOwn(originalShares(e),member)||!isReturn&&e.payerMemberId!==p.toMemberId||isReturn&&!e.refunds?.length)invalid();
+   const token=p.expenseId+':'+member,map=isReturn?returned:paid;map.set(token,(map.get(token)||0n)+BigInt(p.amountCents));
   }
  }
  for(const [key,e]of Object.entries(state.expenses[id]))for(const [member,cents]of Object.entries(e.repaid))if(BigInt(cents)!==(paid.get(key+':'+member)||0n))invalid();
+ for(const [key,e]of Object.entries(state.expenses[id]))for(const member of Object.keys(originalShares(e)))if(BigInt(e.returned?.[member]||0)!==(returned.get(key+':'+member)||0n))invalid();
  const groups=new Map();for(const p of Object.values(state.payments[id]))if(p.batchId){
   const previous=groups.get(p.batchId);if(previous&&(['fromMemberId','toMemberId','type','date','note'].some(key=>p[key]!==previous[key])||Boolean(p.reversedBy)!==Boolean(previous.reversedBy)))invalid();groups.set(p.batchId,p);
  }

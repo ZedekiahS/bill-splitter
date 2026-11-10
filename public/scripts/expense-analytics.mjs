@@ -1,4 +1,4 @@
-import {consumptionShares,splitShares,validateDate} from './ledger-core.mjs';
+import {expensePieces,validateDate} from './ledger-core.mjs';
 
 export const categories={uncategorized:'未分类',food:'餐饮',lodging:'住宿',transport:'交通',entertainment:'门票／娱乐',shopping:'购物',household:'日用',other:'其他'};
 export const projectTypes={general:'共同开销',trip:'旅行',meal:'聚餐',home:'合租',personal:'个人日常'};
@@ -25,8 +25,7 @@ export function checkedSum(values){
 export function consumptionRows(snapshot,{uid,memberId,personal=false}={}){
   const ledger=snapshot.ledger,myIds=new Set(snapshot.members.filter(m=>memberId?m.id===memberId:uid&&m.uid===uid).map(m=>m.id));
   return snapshot.expenses.filter(e=>e.status==='active').flatMap(e=>{
-    const pieces=e.items?.length?e.items.map((item,index)=>({title:item.title,category:item.category??e.category,shares:splitShares(item.amountCents,item.memberIds),amountCents:item.amountCents,itemIndex:index})):
-      [{title:e.title,category:e.category,shares:consumptionShares(e),amountCents:e.amountCents,itemIndex:null}];
+    const pieces=expensePieces(e);
     return pieces.map(piece=>({ledgerId:ledger.id,ledgerTitle:ledger.title,expenseId:e.id,title:e.title,itemTitle:piece.title,itemIndex:piece.itemIndex,date:e.date,currency:ledger.currency,category:categoryId(piece.category),amountCents:personal?checkedSum(Object.entries(piece.shares).filter(([id])=>myIds.has(id)).map(([,v])=>v)):piece.amountCents})).filter(row=>row.amountCents>0);
   });
 }

@@ -1,7 +1,7 @@
 import {randomId} from './random-id.mjs';
 export function expenseVersion(expense) {
   const {title,date,amountCents,payerMemberId,shares,items=[],category='uncategorized',note='',receipts=[],status,repaid={}}=expense;
-  return structuredClone({title,date,amountCents,payerMemberId,shares,items,category,note,receipts,status,repaid});
+  return structuredClone({title,date,amountCents,payerMemberId,shares,items,category,note,receipts,status,repaid,...(expense.refunds?{refunds:expense.refunds}:{}),...(expense.returned?{returned:expense.returned}:{})});
 }
 export function legacyHistory(id,expense,payments,members) {
   const name=uid=>Object.values(members).find(member=>member.uid===uid)?.name||null;

@@ -96,3 +96,39 @@ The user permits a new palette suitable for the use case. Future background cust
   ledgers. Preferences synchronize across devices and cannot be set for another uid.
 - Personal daily is an ordinary self-owned ledger. One-member daily ledgers omit empty
   shared settlement panels; members can still be added using the existing controls.
+
+## Linked refunds
+
+- Refunds belong to an existing active expense. The original payer receives the merchant
+  refund in the ledger currency; that payer or the owner records it. Each record has
+  a received date, amount, beneficiary shares, optional item scope, note and actor.
+- Original amounts/shares and member transfers remain unchanged. Net consumption is
+  reduced on the original date and category. A whole-expense refund allocates each
+  beneficiary's reduction across their remaining items; item refunds affect that item only.
+- Each beneficiary and item has a remaining refundable capacity. Multiple refunds cannot
+  exceed it. Integer-cent allocation conserves the exact refund amount.
+- Already-paid money can create an opposite-direction return obligation. Actual returns
+  are member payment records confirmed by their recipient/owner, including partial and
+  batched returns. A refund reversal retains those transfers and recalculates the debt.
+- Refund history locks original financial fields; metadata/categories/receipts remain
+  correctable. History and full backups retain active and reversed refunds. Concurrent
+  writes require review; uncertain saves replay one frozen payload and idempotency key.
+- Refunds to a different recipient, cross-currency refunds, deposits and merchant credit
+  are not modeled in this first version.
+
+## Personal monthly budget
+
+- One optional amount per account, literal calendar month and currency. Zero is an
+  explicit no-spending budget; removal leaves no active budget. No automatic rollover.
+- Only the authenticated account reads or changes its budgets. Shared ledger members
+  and owners cannot access them. They are excluded from ledger JSON/ZIP exports.
+- Spending uses the caller's net consumption across included ledgers for the whole
+  selected month. Classification/project chart filters do not narrow the budget.
+  Repayments and returns never change consumption; refunds adjust the original month.
+- My spending shows the budget, spent and remaining/over amount. Spent opens precisely
+  matching history. New expense entry gains no budget fields or extra steps.
+- Saves synchronize through the existing revision polling. Stale versions require
+  explicit review. Unknown writes retry their original payload/key; navigation during
+  a failed save preserves the draft and restores usable controls.
+- Deposits are excluded by the user's decision. Category/project budgets, rollover,
+  forecasting and budget notifications are outside this lightweight first release.
