@@ -19,10 +19,10 @@ async function navigate(f,view,method='button'){
  await tick();
 }
 function scheduledSync(f){
- let task;
- const scheduler=createAutoSync({check:f.sync,visible:()=>true,onUnauthorized:()=>assert.fail('unexpected unauthorized response'),setTimer(fn){task=fn;return fn;},clearTimer(){task=null;}});
+ let task,delay;
+ const scheduler=createAutoSync({check:f.sync,visible:()=>true,onUnauthorized:()=>assert.fail('unexpected unauthorized response'),setTimer(fn,ms){task=fn;delay=ms;return fn;},clearTimer(){task=null;}});
  f.context.scheduler=scheduler;vm.runInContext('autoSync=scheduler',f.context);scheduler.start();
- return {async poll(){assert.ok(task,'automatic sync must remain scheduled');const fn=task;task=null;await fn();},stop:()=>scheduler.stop()};
+ return {async poll(){assert.ok(task,'automatic sync must remain scheduled');const fn=task;task=null;await fn();},get delay(){return delay;},stop:()=>scheduler.stop()};
 }
 async function fixture(){
  const dom=new JSDOM(html,{url:'http://localhost/app.html#personal'}),w=dom.window;w.HTMLElement.prototype.scrollIntoView=()=>{};w.scrollTo=({top})=>{w.scrollY=top;};
@@ -178,5 +178,66 @@ test('same-page failed inclusion save keeps its inline error and does not reload
   const toggle=f.root.querySelector('[data-report-inclusion="a"]');toggle.checked=false;await toggle.onchange();await scheduler.poll();
   assert.equal(toggle.checked,true);assert.equal(toggle.disabled,false);assert.equal(f.root.querySelector('#scope-error').hidden,false);
   assert.match(f.root.querySelector('#scope-error').textContent,/网络连接失败/);assert.equal(reportReads,0);
+ }finally{scheduler.stop();f.dom.window.close();}
+});
+
+for(const kind of ['ordinary','recovery'])test(`${kind} report cannot be overwritten by an older same-page background response`,async()=>{
+ const f=await fixture(),scheduler=scheduledSync(f);try{
+  f.snapshot.expenses[0].amountCents=3500;f.snapshot.expenses[0].shares.me=3500;
+  await scheduler.poll();
+  const original=f.context.store.personalConsumption,requests=[],save=deferred();let pendingSave;
+  if(kind==='recovery'){
+   f.context.store.setAnalyticsInclusion=()=>save.promise;
+   const toggle=f.root.querySelector('[data-report-inclusion="a"]');toggle.checked=false;pendingSave=toggle.onchange();
+  }
+  f.context.store.personalConsumption=()=>{const request=deferred();requests.push(request);return request.promise;};
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+  const abandoned=kind==='recovery'?requests[0]:null;
+  if(pendingSave){save.reject(Error('offline'));await pendingSave;await tick();}
+  const visibleRead=requests.at(-1),readsBeforeSync=requests.length;
+  f.touch(); // The background poll has a reason to refresh while the page is loading.
+  const pendingSync=scheduler.poll();await tick();
+  const olderSyncRead=requests.length>readsBeforeSync?requests.at(-1):null,oldReport=await original();
+  f.add('new',4000);
+  visibleRead.resolve(await original());await tick();
+  assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/);
+  olderSyncRead?.resolve(oldReport);abandoned?.resolve(oldReport);await pendingSync;await tick();
+  assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/,'late background snapshot must not regress the visible amount to 35');
+  let backgroundReads=0;f.context.store.personalConsumption=()=>{backgroundReads++;return original();};await scheduler.poll();
+  assert.match(f.root.querySelector('.report-total strong').textContent,/75\.00/);
+  const reads=f.reads;await scheduler.poll();assert.equal(f.reads,reads+1,'polling continues after the report finishes');
+  assert.equal(backgroundReads,1,'pending revision is consumed once, after foreground loading');assert.equal(scheduler.delay,3000,'background mounting must not create an immediate polling loop');
+ }finally{scheduler.stop();f.dom.window.close();}
+});
+
+test('a failed foreground report releases polling and lets an unconsumed revision recover',async()=>{
+ const f=await fixture(),scheduler=scheduledSync(f);try{
+  await scheduler.poll();const original=f.context.store.personalConsumption,pending=deferred();let reportReads=0;
+  f.context.store.personalConsumption=()=>{reportReads++;return pending.promise;};
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');f.add('new',4000);
+  const revisionReads=f.reads;await scheduler.poll();
+  assert.equal(f.reads,revisionReads);assert.equal(reportReads,1,'no parallel report while foreground is pending');
+  pending.reject(Error('offline'));await tick();
+  assert.ok(f.root.querySelector('#consumption-report [data-action="refresh"]'));assert.equal(scheduler.delay,0,'foreground failure must wake the paused scheduler');
+  f.context.store.personalConsumption=()=>{reportReads++;return original();};await scheduler.poll();
+  assert.match(f.root.querySelector('.report-total strong').textContent,/50\.00/);assert.equal(reportReads,2);
+  await scheduler.poll();assert.equal(reportReads,2);assert.equal(scheduler.delay,3000);
+ }finally{scheduler.stop();f.dom.window.close();}
+});
+
+for(const outcome of ['success','error'])test(`discarded foreground ${outcome} does not release polling while recovery is still loading`,async()=>{
+ const f=await fixture(),scheduler=scheduledSync(f);try{
+  await scheduler.poll();const original=f.context.store.personalConsumption,old=deferred(),replacement=deferred(),save=deferred();let reportReads=0;
+  f.context.store.personalConsumption=()=>{reportReads++;return reportReads===1?old.promise:replacement.promise;};
+  f.context.store.setAnalyticsInclusion=()=>save.promise;
+  const toggle=f.root.querySelector('[data-report-inclusion="a"]');toggle.checked=false;const pendingSave=toggle.onchange();
+  await navigate(f,'project-stats','hash');await navigate(f,'personal','hash');
+  save.reject(Error('offline'));await pendingSave;await tick();assert.equal(reportReads,2);
+  if(outcome==='success')old.resolve(await original());else old.reject(Error('old failure'));
+  await tick();assert.equal(f.root.querySelector('#consumption-report').getAttribute('aria-busy'),'true');
+  f.touch();const revisionReads=f.reads;await scheduler.poll();assert.equal(f.reads,revisionReads);assert.equal(reportReads,2);
+  replacement.resolve(await original());await tick();assert.equal(scheduler.delay,0);
+  assert.match(f.root.querySelector('.report-total strong').textContent,/10\.00/);
+  f.context.store.personalConsumption=original;await scheduler.poll();assert.match(f.root.querySelector('.report-total strong').textContent,/10\.00/);assert.equal(scheduler.delay,3000);
  }finally{scheduler.stop();f.dom.window.close();}
 });

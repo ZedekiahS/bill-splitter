@@ -120,7 +120,11 @@ async function loadData(preferredId) {
   if(id){const url=new URL(location.href);url.searchParams.set('ledger',id);url.hash=state.view;history.replaceState(null,'',url);}
   } finally {loadingData=Math.max(0,loadingData-1);}
 }
-function syncBlocked(){return state.starting||loadingData||saving||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));}
+function syncBlocked(){
+  // Foreground loading/recovery owns the report until it finishes. Starting a
+  // parallel background read would let an older snapshot overwrite that result.
+  return state.starting||loadingData||saving||Boolean($('#consumption-report[aria-busy="true"]'))||Boolean(document.activeElement?.matches?.('#expense-search, #ledger-picker, .expense-filter-fields input, .expense-filter-fields select, input[data-report-filter][data-editing="true"]'));
+}
 async function syncChanges(){
   if(!state.store||syncBlocked())return;
   const generation=dataGeneration,reportVersion=reportGeneration,store=state.store,view=state.view;
@@ -219,7 +223,12 @@ async function renderConsumption(suppliedData){
     try{if(row.ledgerId!==state.snapshot?.ledger.id)await loadData(row.ledgerId);showExpense(row.expenseId);}catch(error){toast(errorMessage(error));}
   }});
  }catch(error){if(valid())target.innerHTML=`<p class="form-error" role="alert">${escape(errorMessage(error))}</p><button class="button secondary" data-action="refresh">${t('重试')}</button>`;}
- finally{if(valid())target.removeAttribute('aria-busy');}
+ finally{if(valid()){
+  target.removeAttribute('aria-busy');
+  // Resume polling even after a failed foreground read; supplied sync data does
+  // not wake its own scheduler again. Discarded requests must not release it.
+  if(isPersonal&&suppliedData===undefined)autoSync?.wake();
+ }}
 }
 async function personalLedger(){
  const personal=state.ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===state.store.currentUser.uid&&l.status!=='archived');
