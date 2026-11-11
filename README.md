@@ -32,6 +32,10 @@ custom splits and multi-member ledgers keep their full controls. English settlem
 exports label zero net balances as **Net balance**, without implying opposing debts
 have been paid. [Personal entry and wording review](docs/review/personal-entry-2026-11-11.md).
 
+Cancelling or leaving during creation/loading stops the automatic entry step;
+an already-created ledger remains available and is reused on the next visit.
+[Cancellation and delayed-result checks](docs/review/personal-entry-cancellation-2026-11-11.md).
+
 ## Linked merchant refunds
 
 Record a partial, full or repeated refund from its original expense. Select the

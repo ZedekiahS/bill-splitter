@@ -109,18 +109,19 @@ function showSignIn() {
   $('.avatar-self').textContent='?';
   $('#main-content').innerHTML=empty(t('登录后，继续你的账本'),t('账号登录后可访问共享账本和提交成员认领。'),`<a class="button primary" href="index.html?next=${encodeURIComponent(location.pathname+location.search)}">${t('登录账号')}</a><a class="button secondary" href="app.html?demo=1">${t('先试用')}</a>`);
 }
-async function loadData(preferredId) {
+async function loadData(preferredId,isCurrent=()=>true) {
   const generation=++dataGeneration;loadingData++;
   try {
   const oldId=state.snapshot?.ledger.id;
   const ledgers=await state.store.listLedgers();
   const id=[preferredId,oldId,params.get('ledger'),ledgers.find(row=>row.status!=='archived')?.id,ledgers[0]?.id].find(id=>ledgers.some(l=>l.id===id));
   const snapshot=id?await state.store.loadLedger(id):null;
-  if(generation!==dataGeneration)return;
+  if(generation!==dataGeneration||!isCurrent())return false;
   state.ledgers=ledgers;state.snapshot=snapshot;
   if(id!==oldId){state.search='';state.filter='all';state.expenseFilters={memberId:'',memberRole:'any',from:'',to:'',status:'all'};state.expenseTab='records';state.showArchived=false;}
   state.startupError=null;render();
   if(id){const url=new URL(location.href);url.searchParams.set('ledger',id);url.hash=state.view;history.replaceState(null,'',url);}
+  return true;
   } finally {loadingData=Math.max(0,loadingData-1);}
 }
 function syncBlocked(){
@@ -238,8 +239,15 @@ async function renderConsumption(suppliedData){
  }}
 }
 async function personalLedger(){
- const personal=state.ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===state.store.currentUser.uid&&l.status!=='archived');
- if(personal){state.view='overview';await loadData(personal.id);await newExpense();}else newLedger('personal',{continueEntry:true});
+ const request=++editorRequest,store=state.store,isCurrent=()=>request===editorRequest&&store===state.store;
+ try{
+ // A cancelled continuation may still have created the ledger on the server.
+ const ledgers=await store.listLedgers();
+ if(!isCurrent())return;
+ state.ledgers=ledgers;
+ const personal=ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===store.currentUser.uid&&l.status!=='archived');
+ if(personal){state.view='overview';const loaded=await loadData(personal.id,isCurrent);if(loaded&&isCurrent())await newExpense();}else newLedger('personal',{continueEntry:true});
+ }catch(error){if(isCurrent())toast(errorMessage(error));}
 }
 function projectFields(ledger={}){
  return `<label class="form-field"><span class="field-label">${t('账本类型')}</span><select class="form-select" name="projectType">${Object.entries(projectTypes).map(([id,label])=>`<option value="${id}" ${id===(ledger.projectType||'general')?'selected':''}>${t(label)}</option>`).join('')}</select></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('活动开始（选填）')}</span><input class="form-input" type="date" name="startDate" value="${escape(ledger.startDate||'')}"></label><label class="form-field"><span class="field-label">${t('活动结束（选填）')}</span><input class="form-input" type="date" name="endDate" value="${escape(ledger.endDate||'')}"></label></div>`;
@@ -370,19 +378,21 @@ function membersView() {
 }
 
 function openDialog(title,body,footer='',wide=false) {
+  ++editorRequest;
   activeEditor?.flush();activeEditor=null;
   dialogRefresh=null;
   const d=$('#action-dialog'); d.classList.remove('history-dialog','personal-entry-dialog');d.classList.toggle('wide-dialog',wide);
   $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
 }
-function closeDialog() {activeEditor?.flush();activeEditor=null;$('#action-dialog').close();}
+function closeDialog(preserveEntry=false) {if(!preserveEntry)++editorRequest;activeEditor?.flush();activeEditor=null;$('#action-dialog').close();}
 function formError(message) {const e=$('#form-error');if(e&&(!e.closest('dialog')||e.closest('dialog').open)){e.textContent=message;e.hidden=false;}else toast(message);}
 function errorSlot(){return '<p class="form-error" id="form-error" role="alert" hidden></p>';}
-async function finishSave(success,preferredId) {
-  closeDialog();
-  try {await loadData(preferredId);toast(success);return true;}
-  catch {toast(t('已保存，但刷新失败。请刷新账本查看最新记录，无需重复提交。'));}
+async function finishSave(success,preferredId,isCurrent=null) {
+  if(isCurrent&&!isCurrent())return false;
+  closeDialog(Boolean(isCurrent));
+  try {const loaded=await loadData(preferredId,isCurrent||undefined);if(isCurrent&&(!isCurrent()||!loaded))return false;toast(success);return true;}
+  catch {if(!isCurrent||isCurrent())toast(t('已保存，但刷新失败。请刷新账本查看最新记录，无需重复提交。'));}
 }
 async function submitForm(event, action) {
   event.preventDefault();const form=event.target,button=event.submitter||form.querySelector('[type="submit"]');if(form.dataset.submitting==='true'||button?.disabled)return;form.dataset.submitting='true';
@@ -396,7 +406,16 @@ function newLedger(type='general',{continueEntry=false}={}) {
   openDialog(t(type==='personal'?'创建个人账本':'新建共同账本'),`<form id="ledger-form"><label class="form-field"><span class="field-label">${t('账本名称')}</span><input class="form-input" name="title" placeholder="${t('例如：阳光合租 · 秋季')}" maxlength="60" required autofocus></label><label class="form-field"><span class="field-label">${t('记账币种')}</span><select class="form-select" name="currency"><option value="CNY">${t('人民币 CNY')}</option><option value="USD">${t('美元 USD')}</option></select></label>${type==='personal'?'':`<p class="form-hint">${t('一个账本使用一种币种，成员与账单都归在这本账里。')}</p>`}${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t(continueEntry?'创建并记一笔':'创建账本')}</button></div></form>`);
   $('#ledger-form [name="currency"]').closest('label').insertAdjacentHTML('beforebegin',type==='personal'?'<input type="hidden" name="projectType" value="personal">':projectFields({projectType:type}));
   if(type==='personal')$('#ledger-form [name="title"]').value=t('我的日常');
-  $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{const id=await state.store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:state.store.currentUser.displayName || t('我')});state.view=data.get('projectType')==='personal'?'overview':'members';const loaded=await finishSave(t('账本已创建。'),id);if(continueEntry&&loaded&&state.snapshot?.ledger.id===id)await newExpense();}));
+  const request=editorRequest,store=state.store,isCurrent=()=>request===editorRequest&&store===state.store;
+  $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{
+    let id;
+    try{id=await store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:store.currentUser.displayName || t('我')});}
+    catch(error){if(isCurrent())throw error;return;}
+    if(!isCurrent())return;
+    state.view=data.get('projectType')==='personal'?'overview':'members';
+    const loaded=await finishSave(t('账本已创建。'),id,isCurrent);
+    if(continueEntry&&loaded&&isCurrent()&&state.snapshot?.ledger.id===id)await newExpense();
+  }));
 }
 function newMember() {
   openDialog(t('添加一位伙伴'),`<form id="member-form"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="name" maxlength="40" placeholder="${t('输入名字或熟悉的称呼')}" required autofocus></label><p class="form-hint">${t('现在就可以为这位伙伴记账，之后再邀请本人认领。')}</p><p id="member-duplicate" class="form-hint" hidden>${t('已有同名成员；如果是同一个人，无需重复添加。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('完成')}</button><button class="button primary" type="submit">${t('添加成员')}</button></div></form>`);
@@ -736,7 +755,7 @@ document.addEventListener('click', async event => {
   if(el.dataset.editExpense){const expense=state.snapshot.expenses.find(row=>row.id===el.dataset.editExpense);if(expense)newExpense({initial:expense,expenseId:expense.id});return;}
   if(el.dataset.expenseHistory){showHistory(el.dataset.expenseHistory);return;}
   if(el.dataset.settlementScope){state.settlementScope=el.dataset.settlementScope;render();return;}
-  if (el.dataset.view) {state.view=el.dataset.view;location.hash=state.view;render();window.scrollTo({top:0,behavior:'instant'});return;}
+  if (el.dataset.view) {++editorRequest;state.view=el.dataset.view;location.hash=state.view;render();window.scrollTo({top:0,behavior:'instant'});return;}
   if (el.dataset.ledger) {await selectLedger(el.dataset.ledger);return;}
   if (el.dataset.expense) {showExpense(el.dataset.expense);return;}
   if(el.dataset.refund){refundDialog(el.dataset.refund);return;}
@@ -791,15 +810,18 @@ document.addEventListener('click', async event => {
 });
 async function selectLedger(id) {++editorRequest;closeDialog();if(state.view==='personal')state.view='overview';try {await loadData(id);window.scrollTo({top:0,behavior:'instant'});}catch(error){toast(errorMessage(error));}}
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__import__'){render();importDialog();return;}if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
-window.addEventListener('hashchange',()=>{if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.store)render();}});
+window.addEventListener('hashchange',()=>{++editorRequest;if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.store)render();}});
 $('#language-picker').addEventListener('change',event=>setLanguage(event.target.value));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)activeEditor?.flush();autoSync?.wake();});
 document.addEventListener('focusout',()=>autoSync?.wake());
 window.addEventListener('online',()=>autoSync?.wake());
 window.addEventListener('focus',()=>autoSync?.wake());
-window.addEventListener('pagehide',()=>{activeEditor?.flush();++dataGeneration;autoSync?.stop();});
+window.addEventListener('pagehide',()=>{++editorRequest;activeEditor?.flush();++dataGeneration;autoSync?.stop();});
 window.addEventListener('pageshow',()=>{if(!state.starting&&state.store?.mode==='api')startAutoSync();});
 $('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open){activeEditor?.flush();activeEditor=null;dialogRefresh=null;}autoSync?.wake();});
+// Escape cancels the user's intent; the queued close event also fires after
+// successful creation, so it must not cancel that automatic continuation.
+$('#action-dialog').addEventListener('cancel',()=>{++editorRequest;});
 document.addEventListener('languagechange',()=>{
   const claimName=$('#claim-form input[name="name"]')?.value;
   translatePage();

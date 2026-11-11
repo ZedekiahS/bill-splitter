@@ -20,6 +20,7 @@ const keys=['document','window','FormData','Event','CustomEvent','localStorage']
 let dom;
 afterEach(()=>{dom?.window.close();for(const [key,value]of Object.entries(originals))if(value===undefined)delete globalThis[key];else globalThis[key]=value;setLanguage('zh-CN');});
 const tick=()=>new Promise(resolve=>setTimeout(resolve,15));
+const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 async function fixture(language='zh-CN'){
  dom=new JSDOM(html,{url:'http://localhost/app.html#personal'});const w=dom.window;
  w.document.querySelector('.topbar-actions').insertAdjacentHTML('beforeend','<button data-action="ledger-options"></button>');
@@ -118,4 +119,80 @@ test('unfinished participant tools remain visible when a self-only draft is rest
  await f.run('activeEditor.flush()');f.run('closeDialog()');await f.run('personalLedger()');assert.equal(f.$('.entry-sharing').open,true);assert.equal(f.$('#batch-member-names').value,'Alice, Bob');
  await f.click('#expense-form .primary[type="submit"]');assert.equal(f.$('.entry-sharing').open,true);assert.equal(f.$('#participant-tools-error').hidden,false);
  const id=(await f.store.listLedgers())[0].id;assert.equal((await f.store.loadLedger(id)).expenses.length,0);
+});
+
+for(const stage of ['creation','load-button','load-hash'])test(`leaving first entry during delayed ${stage} does not reopen an editor`,async()=>{
+ const f=await fixture(),gate=deferred(),entered=deferred();let writes=0;
+ const create=f.store.createLedger,load=f.store.loadLedger;
+ f.store.createLedger=async data=>{writes++;const id=await create(data);if(stage==='creation'){entered.resolve();await gate.promise;}return id;};
+ f.store.loadLedger=async id=>{const snapshot=await load(id);if(stage!=='creation'){entered.resolve();await gate.promise;}return snapshot;};
+ await f.click('[data-action="personal-ledger"]');await f.click('#ledger-form [type="submit"]');await entered.promise;
+ if(stage==='creation')await f.click('#ledger-form [data-action="close-dialog"]');
+ if(stage==='load-hash'){
+  const changed=new Promise(resolve=>f.w.addEventListener('hashchange',resolve,{once:true}));f.w.location.hash='expenses';await changed;
+ }else await f.click('#primary-nav [data-view="expenses"]');
+ gate.resolve();await f.wait(()=>f.run('saving')===0);await tick();
+ assert.equal(f.$('#action-dialog').open,false,'leaving must not reopen the first expense');
+ assert.equal(f.run('state.view'),'expenses','late creation must not navigate back');
+ assert.equal(writes,1);const ledgers=await f.store.listLedgers();assert.equal(ledgers.length,1);assert.equal((await load(ledgers[0].id)).expenses.length,0);
+ f.store.loadLedger=load;await f.run('personalLedger()');assert.equal(f.$('#action-dialog').open,true);assert.ok(f.$('#expense-form'));assert.equal(writes,1);
+});
+
+for(const action of ['cancel','escape','pagehide'])test(`delayed creation respects ${action} without losing the created ledger`,async()=>{
+ const f=await fixture(),gate=deferred(),create=f.store.createLedger;
+ f.store.createLedger=async data=>{const id=await create(data);await gate.promise;return id;};
+ await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');
+ if(action==='cancel')await f.click('.dialog-close');
+ if(action==='escape'){f.$('#action-dialog').dispatchEvent(new f.w.Event('cancel'));f.$('#action-dialog').close();}
+ if(action==='pagehide')f.w.dispatchEvent(new f.w.Event('pagehide'));
+ gate.resolve();await f.wait(()=>f.run('saving')===0);
+ assert.equal(f.$('#expense-form'),null);assert.equal(f.run('state.view'),'personal');
+ assert.equal((await f.store.listLedgers()).length,1);
+ if(action!=='pagehide')assert.equal(f.$('#action-dialog').open,false);
+ await f.run('personalLedger()');assert.ok(f.$('#expense-form'));assert.equal((await f.store.listLedgers()).length,1);
+});
+
+for(const close of [false,true])test(`delayed ledger load preserves a replacement dialog, closed=${close}`,async()=>{
+ const f=await fixture(),gate=deferred(),entered=deferred(),load=f.store.loadLedger;
+ f.store.loadLedger=async id=>{const result=await load(id);entered.resolve();await gate.promise;return result;};
+ await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');await entered.promise;
+ f.run('newLedger()');f.input('#ledger-form [name="title"]','Next trip');
+ if(close)await f.click('.dialog-close');
+ gate.resolve();await f.wait(()=>f.run('saving')===0);
+ assert.equal(f.$('#action-dialog').open,!close);assert.equal(f.$('#expense-form'),null);
+ assert.equal(f.$('#ledger-form [name="title"]').value,'Next trip');assert.equal(f.run('state.snapshot'),null);
+});
+
+test('delayed creation load cannot replace a ledger selected afterwards',async()=>{
+ const f=await fixture(),old=await f.store.createLedger({title:'Trip',currency:'CNY'}),gate=deferred(),entered=deferred(),load=f.store.loadLedger;
+ await f.run('loadData()');
+ f.store.loadLedger=async id=>{const result=await load(id);if(id!==old){entered.resolve();await gate.promise;}return result;};
+ await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');await entered.promise;
+ await f.run(`selectLedger(${JSON.stringify(old)})`);gate.resolve();await f.wait(()=>f.run('saving')===0);
+ assert.equal(f.run('state.snapshot.ledger.id'),old);assert.equal(f.$('#action-dialog').open,false);assert.equal(new URL(f.w.location.href).searchParams.get('ledger'),old);
+});
+
+test('leaving while the first expense draft loads prevents a late editor',async()=>{
+ const f=await fixture(),gate=deferred(),entered=deferred(),get=f.drafts.get;
+ f.drafts.get=async key=>{const result=await get(key);entered.resolve();await gate.promise;return result;};
+ await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');await entered.promise;
+ await f.click('#primary-nav [data-view="expenses"]');gate.resolve();await f.wait(()=>f.run('saving')===0);
+ assert.equal(f.$('#action-dialog').open,false);assert.equal(f.run('state.view'),'expenses');
+});
+
+test('normal creation continues even when its programmatic close event arrives after the editor opens',async()=>{
+ const f=await fixture();let sendClose;
+ f.$('#action-dialog').close=function(){this.open=false;sendClose=()=>this.dispatchEvent(new f.w.Event('close'));};
+ await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');await f.wait(()=>f.$('#expense-form'));
+ sendClose();assert.ok(f.run('activeEditor'));assert.equal(f.$('#action-dialog').open,true);
+ f.input('[name="amount"]','8');f.input('[name="title"]','Coffee');await f.click('#expense-form .primary[type="submit"]');await f.wait(()=>f.run('saving')===0);
+ const ledgers=await f.store.listLedgers();assert.equal(ledgers.length,1);assert.equal((await f.store.loadLedger(ledgers[0].id)).expenses.length,1);
+});
+
+test('returning to an existing personal ledger also cancels a delayed load on navigation',async()=>{
+ const f=await fixture();await f.run('personalLedger()');await f.click('#ledger-form [type="submit"]');await f.wait(()=>f.$('#expense-form'));f.run('closeDialog()');
+ const gate=deferred(),entered=deferred(),load=f.store.loadLedger;
+ f.store.loadLedger=async id=>{const result=await load(id);entered.resolve();await gate.promise;return result;};
+ const pending=f.run('personalLedger()');await entered.promise;await f.click('#primary-nav [data-view="expenses"]');gate.resolve();await pending;
+ assert.equal(f.$('#action-dialog').open,false);assert.equal(f.run('state.view'),'expenses');assert.equal((await f.store.listLedgers()).length,1);
 });
