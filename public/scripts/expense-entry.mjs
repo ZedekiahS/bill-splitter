@@ -28,7 +28,7 @@ export function openExpenseEditor(context, options = {}) {
   const editing=Boolean(options.expenseId),financialLocked=editing&&(initial.refunds?.length||Object.values(initial.returned||{}).some(Boolean)||Object.values(initial.repaid||{}).some(value=>value>0));
   const availableMembers=recurring?s.members.filter(m=>Object.hasOwn(initial.shares,m.id)):s.members;
   const recovered=context.draft?.record?.form,continuation=options.continuation;
-  let memberTools,saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
+  let sharingDetails,memberTools,saveDraft=()=>Promise.resolve(),draftComplete=false,attempt=context.draft?.record?.attempt||null;
   let splitType=recovered?.splitType||continuation?.splitType||(initial.items?.length?'items':initial.shares?'amount':'equal'), amountDraftInitialized=recovered?.amountDraftInitialized??Boolean(initial.shares||continuation?.splitType==='amount');
   let manualAmount=recovered?.manualAmount??(recovered?.splitType==='items'?'':recovered?.fields?.amount??(initial.amountCents?amountText(initial.amountCents):''));
   let itemDrafts=recovered?.items||(initial.items || []).map(row=>({title:row.title,amount:amountText(row.amountCents),memberIds:[...row.memberIds],category:row.category||''}));
@@ -236,6 +236,7 @@ export function openExpenseEditor(context, options = {}) {
     }catch(error){summary.textContent=form.elements.amount.value?errorMessage(error):t('先填写账单总额，再分配每个人的金额。');}
   }
   function preview() {
+    updateSharing();
     const chosen=[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value);
     memberTools?.updateCurrent();
     if($('#participant-count'))$('#participant-count').textContent=t('已选 {count} 人',{count:chosen.length});
@@ -301,7 +302,7 @@ export function openExpenseEditor(context, options = {}) {
     if(addingMember)throw new Error('成员正在添加，请稍候再保存。');
     if(assignmentPending()){form.querySelector('.entry-member-add').open=true;$('#item-member-picker input')?.focus();throw new Error('请先选择参与条目，或选择暂不分摊。');}
     if(readingReceipts)throw new Error('收据正在处理，请稍候再保存。');
-    if(memberTools&&!memberTools.readyToSave())return;
+    if(memberTools&&!memberTools.readyToSave()){if(sharingDetails)sharingDetails.open=true;return;}
     const {amount,shares,items=[]}=calculate();
     const payload={title:data.get('title').trim(),date:data.get('date')||today,amountCents:amount,payerMemberId:form.elements.payer.value,shares,items,category:data.get('category'),note:data.get('note').trim(),receipts};
     if(editing){payload.expectedVersion=initial.version||1;payload.changeReason=data.get('changeReason');payload.receipts=receipts.map(file=>file.id?{id:file.id}:file);}
@@ -352,6 +353,31 @@ export function openExpenseEditor(context, options = {}) {
         $('#form-error').hidden=true;preview();saveDraft();
       }
     });
+  }
+  // Only a self-only personal ledger starts with the sharing controls collapsed.
+  // Custom-share drafts and multi-member ledgers keep those controls visible.
+  function selfOnly(){return s.ledger.projectType==='personal'&&s.members.length===1&&s.members[0].id===me?.id;}
+  function simpleSharing(){const ids=[...form.querySelectorAll('[name="participant"]:checked')].map(input=>input.value);return selfOnly()&&splitType==='equal'&&form.elements.payer.value===me.id&&ids.length===1&&ids[0]===me.id;}
+  function updateSharing(){
+    if(!sharingDetails||!form.isConnected)return;
+    if(!simpleSharing())sharingDetails.open=true;
+    sharingDetails.querySelector('summary').hidden=!simpleSharing();
+    const compact=!sharingDetails.open;
+    form.querySelector('.entry-layout').classList.toggle('personal-entry',compact);
+    form.querySelector('.entry-preview').hidden=compact;
+    form.closest('dialog')?.classList.toggle('personal-entry-dialog',compact);
+    if(!editing&&!templateMode&&!recurring)$('#dialog-title').textContent=t(selfOnly()?'记一笔日常开销':'记一笔共同开销');
+    form.elements.title.placeholder=t(selfOnly()?'例如：早餐、地铁或日用品':'例如：周五一起吃火锅');
+  }
+  if(selfOnly()){
+    sharingDetails=document.createElement('details');sharingDetails.className='entry-sharing';
+    sharingDetails.innerHTML=`<summary>${t('分摊设置与参与人')}</summary><div class="entry-sharing-fields"></div>`;
+    fields.insertBefore(sharingDetails,fields.querySelector('.entry-extras'));
+    const sharingFields=sharingDetails.querySelector('.entry-sharing-fields');
+    sharingFields.append(form.elements.payer.closest('label'));
+    const dateRow=form.elements.date.closest('.form-grid');dateRow.prepend(form.elements.category.closest('label'));
+    for(const selector of ['.participant-fieldset','.entry-member-add','.participant-shortcuts','.split-choice','#percent-fields','#amount-fields','#item-fields']){const node=form.querySelector(selector);if(node)sharingFields.append(node);}
+    sharingDetails.open=!simpleSharing()||Boolean(recovered?.participantTools?.batchNames?.trim()||recovered?.participantTools?.groupName?.trim()||Object.keys(recovered?.participantTools?.groupEdits||{}).length);sharingDetails.addEventListener('toggle',updateSharing);updateSharing();
   }
   const capture=()=>({splitType,manualAmount:splitType==='items'?manualAmount:form.elements.amount.value,assignmentMember,participantTools:memberTools?.capture(),percentEdited:[...percentEdited],amountDraftInitialized,items:readItemDrafts(),receipts,
     fields:Object.fromEntries(['amount','title','category','payer','date','note','changeReason','frequency','startDate'].filter(name=>form.elements[name]).map(name=>[name,form.elements[name].value])),

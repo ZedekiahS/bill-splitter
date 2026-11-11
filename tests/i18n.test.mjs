@@ -101,3 +101,16 @@ test('item, receipt and recurring-expense errors retain actionable English messa
   const internal = new Set(['请明确选择 demo 或 cloud 模式。', '浏览器不支持本地演示存储。', 'Firebase 尚未配置，请使用演示模式或配置真实服务。']);
   assert.deepEqual(errors.filter(source => !internal.has(source) && /[\u4e00-\u9fff]/.test(t(source))), []);
 });
+
+
+test('zero net balance does not claim opposing unpaid expenses are settled',()=>{
+  const snapshot={ledger:{title:'Dinner',currency:'CNY'},members:[{id:'a',name:'Alice'},{id:'b',name:'Bob'}],payments:[],expenses:[
+    {id:'one',title:'Lunch',date:'2026-11-11',status:'active',payerMemberId:'a',amountCents:10000,shares:{b:10000},repaid:{}},
+    {id:'two',title:'Dinner',date:'2026-11-11',status:'active',payerMemberId:'b',amountCents:10000,shares:{a:10000},repaid:{}}
+  ]};
+  const english=settlementText(snapshot,'en');assert.match(english,/Bob → Alice: ¥100.00/);assert.match(english,/Alice → Bob: ¥100.00/);
+  assert.match(english,/Alice: Net balance ¥0.00/);assert.match(english,/Bob: Net balance ¥0.00/);assert.doesNotMatch(english,/Settled/);
+  assert.match(settlementText(snapshot,'zh-CN'),/Alice：已平衡 ¥0.00/);
+  snapshot.expenses[0].repaid.b=10000;snapshot.expenses[1].repaid.a=10000;
+  assert.match(settlementText(snapshot,'en'),/No outstanding repayments/);
+});

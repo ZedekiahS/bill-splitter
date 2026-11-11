@@ -239,7 +239,7 @@ async function renderConsumption(suppliedData){
 }
 async function personalLedger(){
  const personal=state.ledgers.find(l=>l.projectType==='personal'&&l.ownerUid===state.store.currentUser.uid&&l.status!=='archived');
- if(personal){state.view='overview';await loadData(personal.id);newExpense();}else newLedger('personal');
+ if(personal){state.view='overview';await loadData(personal.id);await newExpense();}else newLedger('personal',{continueEntry:true});
 }
 function projectFields(ledger={}){
  return `<label class="form-field"><span class="field-label">${t('账本类型')}</span><select class="form-select" name="projectType">${Object.entries(projectTypes).map(([id,label])=>`<option value="${id}" ${id===(ledger.projectType||'general')?'selected':''}>${t(label)}</option>`).join('')}</select></label><div class="form-grid"><label class="form-field"><span class="field-label">${t('活动开始（选填）')}</span><input class="form-input" type="date" name="startDate" value="${escape(ledger.startDate||'')}"></label><label class="form-field"><span class="field-label">${t('活动结束（选填）')}</span><input class="form-input" type="date" name="endDate" value="${escape(ledger.endDate||'')}"></label></div>`;
@@ -372,7 +372,7 @@ function membersView() {
 function openDialog(title,body,footer='',wide=false) {
   activeEditor?.flush();activeEditor=null;
   dialogRefresh=null;
-  const d=$('#action-dialog'); d.classList.remove('history-dialog');d.classList.toggle('wide-dialog',wide);
+  const d=$('#action-dialog'); d.classList.remove('history-dialog','personal-entry-dialog');d.classList.toggle('wide-dialog',wide);
   $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
 }
@@ -381,7 +381,7 @@ function formError(message) {const e=$('#form-error');if(e&&(!e.closest('dialog'
 function errorSlot(){return '<p class="form-error" id="form-error" role="alert" hidden></p>';}
 async function finishSave(success,preferredId) {
   closeDialog();
-  try {await loadData(preferredId);toast(success);}
+  try {await loadData(preferredId);toast(success);return true;}
   catch {toast(t('已保存，但刷新失败。请刷新账本查看最新记录，无需重复提交。'));}
 }
 async function submitForm(event, action) {
@@ -391,12 +391,12 @@ async function submitForm(event, action) {
   saving++;++dataGeneration;
   try {await action(new FormData(event.target));}catch(e){formError(errorMessage(e));}finally{form.dataset.submitting='false';saving--;autoSync?.wake();languagePicker.disabled=languageWasDisabled;if(button){button.disabled=false;button.textContent=button.dataset.label;}}
 }
-function newLedger(type='general') {
+function newLedger(type='general',{continueEntry=false}={}) {
   if(!state.store){showSignIn();return;}
-  openDialog(t('新建共同账本'),`<form id="ledger-form"><label class="form-field"><span class="field-label">${t('账本名称')}</span><input class="form-input" name="title" placeholder="${t('例如：阳光合租 · 秋季')}" maxlength="60" required autofocus></label><label class="form-field"><span class="field-label">${t('记账币种')}</span><select class="form-select" name="currency"><option value="CNY">${t('人民币 CNY')}</option><option value="USD">${t('美元 USD')}</option></select></label><p class="form-hint">${t('一个账本使用一种币种，成员与账单都归在这本账里。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t('创建账本')}</button></div></form>`);
-  $('#ledger-form [name="currency"]').closest('label').insertAdjacentHTML('beforebegin',projectFields({projectType:type}));
+  openDialog(t(type==='personal'?'创建个人账本':'新建共同账本'),`<form id="ledger-form"><label class="form-field"><span class="field-label">${t('账本名称')}</span><input class="form-input" name="title" placeholder="${t('例如：阳光合租 · 秋季')}" maxlength="60" required autofocus></label><label class="form-field"><span class="field-label">${t('记账币种')}</span><select class="form-select" name="currency"><option value="CNY">${t('人民币 CNY')}</option><option value="USD">${t('美元 USD')}</option></select></label>${type==='personal'?'':`<p class="form-hint">${t('一个账本使用一种币种，成员与账单都归在这本账里。')}</p>`}${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t(continueEntry?'创建并记一笔':'创建账本')}</button></div></form>`);
+  $('#ledger-form [name="currency"]').closest('label').insertAdjacentHTML('beforebegin',type==='personal'?'<input type="hidden" name="projectType" value="personal">':projectFields({projectType:type}));
   if(type==='personal')$('#ledger-form [name="title"]').value=t('我的日常');
-  $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{const id=await state.store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:state.store.currentUser.displayName || t('我')});state.view=data.get('projectType')==='personal'?'overview':'members';await finishSave(t('账本已创建。'),id);}));
+  $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{const id=await state.store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:state.store.currentUser.displayName || t('我')});state.view=data.get('projectType')==='personal'?'overview':'members';const loaded=await finishSave(t('账本已创建。'),id);if(continueEntry&&loaded&&state.snapshot?.ledger.id===id)await newExpense();}));
 }
 function newMember() {
   openDialog(t('添加一位伙伴'),`<form id="member-form"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="name" maxlength="40" placeholder="${t('输入名字或熟悉的称呼')}" required autofocus></label><p class="form-hint">${t('现在就可以为这位伙伴记账，之后再邀请本人认领。')}</p><p id="member-duplicate" class="form-hint" hidden>${t('已有同名成员；如果是同一个人，无需重复添加。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('完成')}</button><button class="button primary" type="submit">${t('添加成员')}</button></div></form>`);

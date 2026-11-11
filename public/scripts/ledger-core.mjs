@@ -165,7 +165,7 @@ export function settlementText(snapshot, locale = 'zh-CN') {
   if (lines.length === 3) lines.push(english ? "No outstanding repayments in the current records." : "当前记录没有待确认的还款。");
   lines.push("", english ? "Member net balances (same ledger and currency)" : "成员净余额（同一账本、同一币种）");
   balances.forEach(row => {
-    const label = english ? (row.balanceCents > 0 ? "To receive " : row.balanceCents < 0 ? "To pay " : "Settled ") : (row.balanceCents > 0 ? "待收 " : row.balanceCents < 0 ? "待付 " : "已平衡 ");
+    const label = english ? (row.balanceCents > 0 ? "To receive " : row.balanceCents < 0 ? "To pay " : "Net balance ") : (row.balanceCents > 0 ? "待收 " : row.balanceCents < 0 ? "待付 " : "已平衡 ");
     lines.push(`${row.name}${english ? ': ' : '：'}${label}${formatMoney(Math.abs(row.balanceCents), ledger.currency)}`);
   });
   lines.push("", english ? "Payments are confirmed by the recipient or ledger owner. This app does not transfer money." : "还款由收款人或账本管理员确认；本应用不代为转账。");

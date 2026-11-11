@@ -1,4 +1,10 @@
 export default {
+  '创建个人账本': 'Create personal ledger',
+  '创建并记一笔': 'Create and add expense',
+  '记一笔日常开销': 'Add daily expense',
+  '分摊设置与参与人': 'Sharing and participants',
+  '例如：早餐、地铁或日用品': 'For example: breakfast, transit or groceries',
+
  '核实上次收款':'Check previous payment',
  '上次收款结果待核实':'Previous payment awaiting confirmation',
  '这个组合已删除，请核对后继续。':'This group was deleted. Review its status to continue.',

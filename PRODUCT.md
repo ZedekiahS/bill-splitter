@@ -96,6 +96,12 @@ The user permits a new palette suitable for the use case. Future background cust
   ledgers. Preferences synchronize across devices and cannot be set for another uid.
 - Personal daily is an ordinary self-owned ledger. One-member daily ledgers omit empty
   shared settlement panels; members can still be added using the existing controls.
+- From My spending, first-time daily entry asks only for the personal ledger name
+  and currency, then opens the first expense. The name is prefilled. Self-only
+  equal-split personal entries collapse payer/participant/split controls behind
+  an explicit sharing disclosure. Custom splits, pending participant work and
+  multi-member ledgers remain accessible without losing the draft. Shared-ledger
+  creation and member permissions use their existing flows.
 
 ## Linked refunds
 

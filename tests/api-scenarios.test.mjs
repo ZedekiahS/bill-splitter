@@ -915,3 +915,17 @@ test('budget consumption follows personal net shares and original month, indepen
  await command(alice,f.id,'setAnalyticsInclusion',[false]);assert.equal((await summary()).spentCents,0);
  await command(alice,f.id,'setAnalyticsInclusion',[true]);await command(alice,f.id,'setLedgerStatus',['archived']);assert.equal((await summary()).remainingCents,70000);
 });
+
+
+test('personal daily ledger records self-only spending and supports explicit shared participants',async()=>{
+ const id=await good(alice,'POST','/api/ledgers',{title:'My daily expenses',currency:'CNY',projectType:'personal'});
+ const first=await command(alice,id,'addExpense',[expense('owner',{owner:1250},1250,{title:'Breakfast',date:'2026-11-11',category:'food'})]);
+ let s=await snapshot(alice,id);assert.equal(s.members.length,1);assert.equal(s.ledger.projectType,'personal');assert.deepEqual(expenseDebts(s.expenses.find(e=>e.id===first)),[]);
+ assert.equal((await request(bob,'GET',`/api/ledgers/${id}`)).status,403);
+ const b=await invite(id,alice,bob);const second=await command(alice,id,'addExpense',[expense('owner',{owner:6000,[b]:4000},10000,{title:'Lunch',date:'2026-11-11',category:'food'})]);
+ const views=await Promise.all([snapshot(alice,id),snapshot(bob,id)]);assert.deepEqual(financial(views[0]),financial(views[1]));
+ s=views[0];assert.equal(s.expenses.length,2);assert.equal(expenseDebts(s.expenses.find(e=>e.id===second))[0].amountCents,4000);
+ const reportA=await good(alice,'GET','/api/personal-consumption'),reportB=await good(bob,'GET','/api/personal-consumption');
+ assert.equal(reportA.rows.filter(r=>r.ledgerId===id).reduce((n,r)=>n+r.amountCents,0),7250);
+ assert.equal(reportB.rows.filter(r=>r.ledgerId===id).reduce((n,r)=>n+r.amountCents,0),4000);
+});

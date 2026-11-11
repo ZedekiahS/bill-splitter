@@ -796,3 +796,10 @@ dialog.wide-dialog { width: min(920px, calc(100vw - 48px)); overflow: hidden; }
 .budget-over { color: var(--danger); }
 #budget-form { max-width: 32rem; margin-block-start: 1rem; }
 #budget-form .form-actions { flex-wrap: wrap; }
+
+/* Personal entry retains the same fields while revealing sharing on demand. */
+dialog.wide-dialog.personal-entry-dialog { width: min(620px, calc(100vw - 24px)); }
+.entry-layout.personal-entry { grid-template-columns: minmax(0, 1fr); }
+.entry-sharing { margin-block: 8px 20px; }
+.entry-sharing > summary { cursor: pointer; color: var(--primary); padding-block: 12px; }
+.entry-sharing-fields { padding-top: 16px; }

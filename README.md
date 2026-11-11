@@ -26,6 +26,12 @@ JavaScript.
 
 Verification details: [entry flow review](docs/review/entry-flow-2026-11-06.md).
 
+First-time daily entry creates a personal ledger and immediately opens the first
+expense. A self-only personal ledger starts with sharing controls collapsed;
+custom splits and multi-member ledgers keep their full controls. English settlement
+exports label zero net balances as **Net balance**, without implying opposing debts
+have been paid. [Personal entry and wording review](docs/review/personal-entry-2026-11-11.md).
+
 ## Linked merchant refunds
 
 Record a partial, full or repeated refund from its original expense. Select the
