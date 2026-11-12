@@ -35,6 +35,8 @@ have been paid. [Personal entry and wording review](docs/review/personal-entry-2
 Cancelling or leaving during creation/loading stops the automatic entry step;
 an already-created ledger remains available and is reused on the next visit.
 [Cancellation and delayed-result checks](docs/review/personal-entry-cancellation-2026-11-11.md).
+Navigation also closes obsolete creation forms, and their submit handlers cannot
+send new writes. [Creation-form lifecycle follow-up](docs/review/creation-form-lifecycle-2026-11-12.md).
 
 ## Linked merchant refunds
 

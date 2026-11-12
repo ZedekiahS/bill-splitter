@@ -386,6 +386,12 @@ function openDialog(title,body,footer='',wide=false) {
   if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
 }
 function closeDialog(preserveEntry=false) {if(!preserveEntry)++editorRequest;activeEditor?.flush();activeEditor=null;$('#action-dialog').close();}
+function leaveEntry(){
+  ++editorRequest;
+  // An abandoned creation form must not remain available for another submit.
+  // Keep expense editors intact so their existing draft recovery still applies.
+  if($('#ledger-form')&&$('#action-dialog').open)closeDialog(true);
+}
 function formError(message) {const e=$('#form-error');if(e&&(!e.closest('dialog')||e.closest('dialog').open)){e.textContent=message;e.hidden=false;}else toast(message);}
 function errorSlot(){return '<p class="form-error" id="form-error" role="alert" hidden></p>';}
 async function finishSave(success,preferredId,isCurrent=null) {
@@ -408,6 +414,7 @@ function newLedger(type='general',{continueEntry=false}={}) {
   if(type==='personal')$('#ledger-form [name="title"]').value=t('我的日常');
   const request=editorRequest,store=state.store,isCurrent=()=>request===editorRequest&&store===state.store;
   $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{
+    if(!isCurrent()||!e.target.isConnected||!$('#action-dialog').open)return;
     let id;
     try{id=await store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:store.currentUser.displayName || t('我')});}
     catch(error){if(isCurrent())throw error;return;}
@@ -755,7 +762,7 @@ document.addEventListener('click', async event => {
   if(el.dataset.editExpense){const expense=state.snapshot.expenses.find(row=>row.id===el.dataset.editExpense);if(expense)newExpense({initial:expense,expenseId:expense.id});return;}
   if(el.dataset.expenseHistory){showHistory(el.dataset.expenseHistory);return;}
   if(el.dataset.settlementScope){state.settlementScope=el.dataset.settlementScope;render();return;}
-  if (el.dataset.view) {++editorRequest;state.view=el.dataset.view;location.hash=state.view;render();window.scrollTo({top:0,behavior:'instant'});return;}
+  if (el.dataset.view) {leaveEntry();state.view=el.dataset.view;location.hash=state.view;render();window.scrollTo({top:0,behavior:'instant'});return;}
   if (el.dataset.ledger) {await selectLedger(el.dataset.ledger);return;}
   if (el.dataset.expense) {showExpense(el.dataset.expense);return;}
   if(el.dataset.refund){refundDialog(el.dataset.refund);return;}
@@ -810,13 +817,13 @@ document.addEventListener('click', async event => {
 });
 async function selectLedger(id) {++editorRequest;closeDialog();if(state.view==='personal')state.view='overview';try {await loadData(id);window.scrollTo({top:0,behavior:'instant'});}catch(error){toast(errorMessage(error));}}
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__import__'){render();importDialog();return;}if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
-window.addEventListener('hashchange',()=>{++editorRequest;if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.store)render();}});
+window.addEventListener('hashchange',()=>{leaveEntry();if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.store)render();}});
 $('#language-picker').addEventListener('change',event=>setLanguage(event.target.value));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)activeEditor?.flush();autoSync?.wake();});
 document.addEventListener('focusout',()=>autoSync?.wake());
 window.addEventListener('online',()=>autoSync?.wake());
 window.addEventListener('focus',()=>autoSync?.wake());
-window.addEventListener('pagehide',()=>{++editorRequest;activeEditor?.flush();++dataGeneration;autoSync?.stop();});
+window.addEventListener('pagehide',()=>{leaveEntry();activeEditor?.flush();++dataGeneration;autoSync?.stop();});
 window.addEventListener('pageshow',()=>{if(!state.starting&&state.store?.mode==='api')startAutoSync();});
 $('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open){activeEditor?.flush();activeEditor=null;dialogRefresh=null;}autoSync?.wake();});
 // Escape cancels the user's intent; the queued close event also fires after

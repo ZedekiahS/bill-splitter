@@ -21,6 +21,15 @@ let dom;
 afterEach(()=>{dom?.window.close();for(const [key,value]of Object.entries(originals))if(value===undefined)delete globalThis[key];else globalThis[key]=value;setLanguage('zh-CN');});
 const tick=()=>new Promise(resolve=>setTimeout(resolve,15));
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
+async function leaveCreation(f,way){
+ if(way==='hash'){
+  const changed=new Promise(resolve=>f.w.addEventListener('hashchange',resolve,{once:true}));
+  f.w.location.hash='expenses';await changed;
+ }else{
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide',{persisted:true}));
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pageshow',{persisted:true}));
+ }
+}
 async function fixture(language='zh-CN'){
  dom=new JSDOM(html,{url:'http://localhost/app.html#personal'});const w=dom.window;
  w.document.querySelector('.topbar-actions').insertAdjacentHTML('beforeend','<button data-action="ledger-options"></button>');
@@ -195,4 +204,62 @@ test('returning to an existing personal ledger also cancels a delayed load on na
  f.store.loadLedger=async id=>{const result=await load(id);entered.resolve();await gate.promise;return result;};
  const pending=f.run('personalLedger()');await entered.promise;await f.click('#primary-nav [data-view="expenses"]');gate.resolve();await pending;
  assert.equal(f.$('#action-dialog').open,false);assert.equal(f.run('state.view'),'expenses');assert.equal((await f.store.listLedgers()).length,1);
+});
+
+for(const type of ['personal','general'])for(const way of ['hash','cached-return'])for(const submitted of [false,true])test(`obsolete ${type} creation cannot submit again after ${way}, submitted=${submitted}`,async()=>{
+ const f=await fixture(),old=await f.store.createLedger({title:'Existing shared',currency:'CNY'});
+ await f.run('loadData()');
+ const gate=deferred(),create=f.store.createLedger;let writes=0;
+ f.store.createLedger=async data=>{writes++;const id=await create(data);await gate.promise;return id;};
+ if(type==='personal')await f.run('personalLedger()');else f.run('newLedger()');
+ f.input('#ledger-form [name="title"]','New ledger');
+ const form=f.$('#ledger-form');
+ if(submitted)await f.click('#ledger-form [type="submit"]');
+ await leaveCreation(f,way);gate.resolve();await f.wait(()=>f.run('saving')===0);
+ // Even a queued submit event on the abandoned form must not send a write.
+ for(let i=0;i<2;i++){form.dispatchEvent(new f.w.Event('submit',{bubbles:true,cancelable:true}));await tick();await f.wait(()=>f.run('saving')===0);}
+ assert.equal(writes,submitted?1:0,'obsolete form must not create additional ledgers');
+ assert.equal(f.$('#action-dialog').open,false,'navigation must end the old creation form');
+ assert.equal(f.run('state.snapshot.ledger.id'),old);
+ if(type==='personal'){
+  await f.run('personalLedger()');
+  if(!submitted){await f.click('#ledger-form [type="submit"]');await f.wait(()=>f.$('#expense-form'));}
+  assert.ok(f.$('#expense-form'));assert.equal(writes,1);
+ }else if(submitted){
+  const created=(await f.store.listLedgers()).find(row=>row.id!==old);await f.run(`selectLedger(${JSON.stringify(created.id)})`);await f.run('newExpense()');assert.ok(f.$('#expense-form'));
+ }else{
+  f.run('newLedger()');f.input('#ledger-form [name="title"]','Fresh shared');await f.click('#ledger-form [type="submit"]');await f.wait(()=>f.run('saving')===0);
+  assert.equal(f.run('state.view'),'members');assert.equal(writes,1);assert.equal(f.$('#action-dialog').open,false);
+ }
+ assert.equal((await f.store.listLedgers()).length,2);
+});
+
+for(const type of ['personal','general'])test(`automatic sync cannot leave a resubmittable obsolete ${type} creation`,async()=>{
+ const f=await fixture(),old=await f.store.createLedger({title:'Existing shared',currency:'CNY'});
+ await f.run('loadData()');
+ const gate=deferred(),create=f.store.createLedger,scheduled=new Map();let writes=0,checks=0,timerId=0;
+ f.store.createLedger=async data=>{writes++;const id=await create(data);await gate.promise;return id;};
+ f.store.listUpdates=async()=>{checks++;return (await f.store.listLedgers()).map(row=>({id:row.id}));};
+ f.context.syncTimers={setTimer:fn=>{scheduled.set(++timerId,fn);return timerId;},clearTimer:id=>scheduled.delete(id)};
+ f.run("state.store.mode='api';autoSync=createAutoSync({check:syncChanges,onUnauthorized:clearSession,visible:()=>true,...syncTimers});autoSync.start()");
+ try{
+  if(type==='personal')await f.run('personalLedger()');else f.run('newLedger()');
+  f.input('#ledger-form [name="title"]','New ledger');const form=f.$('#ledger-form');
+  await f.click('#ledger-form [type="submit"]');await leaveCreation(f,'hash');gate.resolve();await f.wait(()=>f.run('saving')===0);
+  for(let i=0;i<4;i++){
+   const [id,run]=scheduled.entries().next().value;scheduled.delete(id);await run();
+  }
+  assert.equal(checks,4);assert.equal(f.run('state.ledgers.length'),2);assert.equal(f.run('state.snapshot.ledger.id'),old);
+  form.dispatchEvent(new f.w.Event('submit',{bubbles:true,cancelable:true}));await tick();await f.wait(()=>f.run('saving')===0);
+  assert.equal(writes,1);assert.equal((await f.store.listLedgers()).length,2);assert.equal(f.$('#action-dialog').open,false);
+ }finally{f.run('autoSync.stop()');}
+});
+
+test('clicking the current navigation tab ends an unsubmitted creation without relying on hashchange',async()=>{
+ const f=await fixture();await f.run('personalLedger()');const form=f.$('#ledger-form');
+ await f.click('#primary-nav [data-view="personal"]');
+ assert.equal(f.$('#action-dialog').open,false);
+ form.dispatchEvent(new f.w.Event('submit',{bubbles:true,cancelable:true}));await tick();await f.wait(()=>f.run('saving')===0);
+ assert.equal((await f.store.listLedgers()).length,0);
+ await f.run('personalLedger()');assert.ok(f.$('#ledger-form'));assert.equal(f.$('#action-dialog').open,true);
 });
