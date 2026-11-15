@@ -1,15 +1,18 @@
-import Fastify from 'fastify';
+import Fastify, {LogController} from 'fastify';
 import staticFiles from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { authService,HttpError } from './auth.mjs';
 import { ledgerService } from './ledgers.mjs';
 import { exportStream } from './ledger-export.mjs';
 import {importUploads} from './import-uploads.mjs';
+import {randomUUID} from 'node:crypto';
+import {errorDiagnostic,loggerOptions,installRequestLogging} from './request-logging.mjs';
 
 export async function buildApp({pool,origins,production=false,registration=true,trustProxy=false,logger=false}){
   const allowed=new Set(origins);
   if(!allowed.size||production&&[...allowed].some(origin=>!origin.startsWith('https://')))throw new Error('Production requires explicit HTTPS PUBLIC_ORIGINS.');
-  const app=Fastify({logger,trustProxy,bodyLimit:10*1024*1024,requestTimeout:300000});
+  const app=Fastify({logger:logger?loggerOptions(logger===true?{}:logger):false,logController:new LogController({disableRequestLogging:true}),requestIdHeader:false,genReqId:randomUUID,trustProxy,bodyLimit:10*1024*1024,requestTimeout:300000});
+  installRequestLogging(app);
   const auth=authService(pool,{secure:production,registration}),ledgers=ledgerService(pool);
   const uploads=importUploads();
   app.addContentTypeParser('application/octet-stream',(_request,stream,done)=>done(null,stream));
@@ -20,7 +23,7 @@ export async function buildApp({pool,origins,production=false,registration=true,
     else if(error.name==='Error'&&/^[\u4e00-\u9fff]/.test(error.message)){status=error.statusCode||(/只有|只能|不是该账本|其他账号/.test(error.message)?403:400);message=error.message;}
     else if(status===413)message='文件或请求太大，请减小后重试。';
     else if(status<500||error instanceof TypeError){status=400;message='请求内容无效，请刷新后重试。';}
-    if(status>=500)request.log.error({code:error.code},'Request failed');
+    if(status>=500)request.log.error({event:'request.failed',route:request.routeOptions.url||'unmatched',status,error:errorDiagnostic(error)},'Request failed');
     reply.code(status).send({error:{message}});
   });
   app.addHook('onRequest',async(request,reply)=>{
@@ -39,8 +42,6 @@ export async function buildApp({pool,origins,production=false,registration=true,
       if(!pathname.startsWith('/api/auth/')&&pathname!=='/api/health'){
         request.user=await auth.current(request);if(!request.user)throw new HttpError(401,'登录已过期，请重新登录。');
       }
-    }else if(pathname.startsWith('/__/')||pathname.endsWith('.html')&&!['/app.html','/index.html'].includes(pathname)){
-      throw new HttpError(404,'页面不存在。');
     }
   });
   app.get('/api/health',async()=>{await pool.query('SELECT 1');return {ok:true};});
@@ -87,6 +88,10 @@ export async function buildApp({pool,origins,production=false,registration=true,
     return reply.send(file.bytes);
   });
   // Unversioned entry points and modules must revalidate after an application update.
-  await app.register(staticFiles,{root:fileURLToPath(new URL('../public/',import.meta.url)),index:'index.html',cacheControl:false,setHeaders:reply=>reply.header('Cache-Control','no-cache')});
+  await app.register(staticFiles,{root:fileURLToPath(new URL('../public/',import.meta.url)),index:'index.html',cacheControl:false,
+    // Authorize the normalized path (and final index path) used by the static
+    // server, rather than independently interpreting the raw request URL.
+    allowedPath:pathname=>{const path='/'+pathname.replace(/^\/+/, '');return !path.startsWith('/__/')&&(!/\.html$/i.test(path)||['/app.html','/index.html'].includes(path));},
+    setHeaders:reply=>reply.header('Cache-Control','no-cache')});
   return app;
 }

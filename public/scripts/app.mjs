@@ -1,3 +1,5 @@
+import {createDialogLifecycle} from './dialog-lifecycle.mjs';
+import {openLedgerCreation} from './ledger-creation.mjs';
 import {openRefundEditor} from './refund-entry.mjs';
 import refundMessages from './refund-messages.mjs';
 import {categories,projectTypes,consumptionRows,checkedSum} from './expense-analytics.mjs';
@@ -36,9 +38,10 @@ const params = new URLSearchParams(location.search);
 const demo = params.get('demo') === '1';
 const state = { store: null, ledgers: [], snapshot: null, view: location.hash.slice(1) || 'overview', filter: 'all', search: '', expenseFilters:{memberId:'',memberRole:'any',from:'',to:'',status:'all'}, filterError:'', filtersExpanded:null, expenseTab:'records', showArchived:false, starting: true, startupError: null, invitation: null, claimSubmitted: false };
 const draftStore=createDraftStore();
-let activeEditor=null,editorRequest=0;
+let activeEditor=null;
 let dataGeneration=0,loadingData=0,saving=0,syncSignature=null,autoSync=null,dialogRefresh=null;
 let reportGeneration=0;
+const dialogs=createDialogLifecycle({dialog:$('#action-dialog'),release:()=>{activeEditor?.flush();activeEditor=null;dialogRefresh=null;},wake:()=>autoSync?.wake()});
 const reportConfigs={personal:{},project:{}};
 const views = [{id:'overview',name:'总览',icon:'home'},{id:'expenses',name:'账单',icon:'receipt'},{id:'settlements',name:'结算',icon:'arrows'},{id:'members',name:'成员',icon:'people'},{id:'personal',name:'我的消费',icon:'chart'}];
 const paths = {
@@ -165,7 +168,7 @@ async function syncChanges(){
   const url=new URL(location.href);if(id)url.searchParams.set('ledger',id);else url.searchParams.delete('ledger');history.replaceState(null,'',url);
 }
 function clearSession(){
-  ++editorRequest;
+  dialogs.leave();
   closeReceiptViewer();
   ++dataGeneration;loadingData=0;autoSync?.stop();closeDialog();
   reportConfigs.personal={};reportConfigs.project={};state.store=null;state.snapshot=null;state.ledgers=[];state.invitation=null;
@@ -239,7 +242,7 @@ async function renderConsumption(suppliedData){
  }}
 }
 async function personalLedger(){
- const request=++editorRequest,store=state.store,isCurrent=()=>request===editorRequest&&store===state.store;
+ const operation=dialogs.begin(),store=state.store,isCurrent=()=>operation.isCurrent()&&store===state.store;
  try{
  // A cancelled continuation may still have created the ledger on the server.
  const ledgers=await store.listLedgers();
@@ -377,21 +380,14 @@ function membersView() {
     `<div class="overview-grid"><section class="panel">${state.snapshot.members.map(m=>`<div class="member-row spacious">${avatar(m.name)}<div class="member-info"><strong>${escape(m.name)}${m.uid===state.store.currentUser.uid?` <span class="me-label">${t('我')}</span>`:''}</strong><small>${m.status==='inactive'?t('已停用'):m.uid===state.snapshot.ledger.ownerUid?t('账本创建者'):m.uid?t('已认领 · 可共同记账'):t('临时成员 · 认领前由账本创建者代记')}</small></div><button class="text-link" data-member-detail="${escape(m.id)}">${t('查看往来')}</button>${!m.uid&&!archived()&&(owner()||m.createdByUid===state.store.currentUser.uid)?`<button class="text-link" data-edit-member="${escape(m.id)}">${t('编辑')}</button>`:''}${m.uid?`<span class="badge success">${t('已加入')}</span>`:owner()&&!archived()&&m.status!=='inactive'?`<button class="button secondary small-button" data-invite-member="${escape(m.id)}">${t('邀请认领')}</button>`:`<span class="badge neutral">${t('待认领')}</span>`}</div>`).join('')}</section><aside class="side-column"><section class="panel"><div class="section-heading"><h2>${t('认领申请')}</h2><span class="count-label">${claims.length}</span></div>${owner()?claims.length?claims.map(c=>{const invite=state.snapshot.invites.find(i=>i.id===c.inviteToken);return `<div class="claim-row"><p>${t('{name}申请认领「{member}」', {name:`<strong>${escape(c.displayName)}</strong>`,member:escape(invite?.memberName || t('成员'))})}</p><button class="button primary full-width" data-approve="${escape(c.inviteToken)}" data-uid="${escape(c.uid)}">${t('核对本人后批准')}</button><button class="text-link" data-reject-claim="${escape(c.inviteToken)}" data-uid="${escape(c.uid)}">${t('拒绝申请')}</button></div>`;}).join(''):`<p class="muted">${t('伙伴通过邀请链接申请后，会在这里等待你的确认。')}</p>`:`<p class="muted">${t('认领申请由账本创建者核对与批准。')}</p>`}</section></aside></div>`;
 }
 
-function openDialog(title,body,footer='',wide=false) {
-  ++editorRequest;
-  activeEditor?.flush();activeEditor=null;
-  dialogRefresh=null;
-  const d=$('#action-dialog'); d.classList.remove('history-dialog','personal-entry-dialog');d.classList.toggle('wide-dialog',wide);
-  $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
-  if (!d.open)d.showModal();else d.querySelector('[autofocus]')?.focus();
+function openDialog(title,body,footer='',wide=false,options={}) {
+  return dialogs.open(d=>{
+    d.classList.remove('history-dialog','personal-entry-dialog');d.classList.toggle('wide-dialog',wide);
+    $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${title}</h2><button class="dialog-close icon-button" data-action="close-dialog" aria-label="${t('关闭')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
+  },options);
 }
-function closeDialog(preserveEntry=false) {if(!preserveEntry)++editorRequest;activeEditor?.flush();activeEditor=null;$('#action-dialog').close();}
-function leaveEntry(){
-  ++editorRequest;
-  // An abandoned creation form must not remain available for another submit.
-  // Keep expense editors intact so their existing draft recovery still applies.
-  if($('#ledger-form')&&$('#action-dialog').open)closeDialog(true);
-}
+function closeDialog(preserveEntry=false){dialogs.close({reason:preserveEntry?'complete':'user'});}
+function leaveEntry(){dialogs.leave();}
 function formError(message) {const e=$('#form-error');if(e&&(!e.closest('dialog')||e.closest('dialog').open)){e.textContent=message;e.hidden=false;}else toast(message);}
 function errorSlot(){return '<p class="form-error" id="form-error" role="alert" hidden></p>';}
 async function finishSave(success,preferredId,isCurrent=null) {
@@ -407,22 +403,14 @@ async function submitForm(event, action) {
   saving++;++dataGeneration;
   try {await action(new FormData(event.target));}catch(e){formError(errorMessage(e));}finally{form.dataset.submitting='false';saving--;autoSync?.wake();languagePicker.disabled=languageWasDisabled;if(button){button.disabled=false;button.textContent=button.dataset.label;}}
 }
-function newLedger(type='general',{continueEntry=false}={}) {
+function newLedger(type='general',options={}) {
   if(!state.store){showSignIn();return;}
-  openDialog(t(type==='personal'?'创建个人账本':'新建共同账本'),`<form id="ledger-form"><label class="form-field"><span class="field-label">${t('账本名称')}</span><input class="form-input" name="title" placeholder="${t('例如：阳光合租 · 秋季')}" maxlength="60" required autofocus></label><label class="form-field"><span class="field-label">${t('记账币种')}</span><select class="form-select" name="currency"><option value="CNY">${t('人民币 CNY')}</option><option value="USD">${t('美元 USD')}</option></select></label>${type==='personal'?'':`<p class="form-hint">${t('一个账本使用一种币种，成员与账单都归在这本账里。')}</p>`}${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('取消')}</button><button class="button primary" type="submit">${t(continueEntry?'创建并记一笔':'创建账本')}</button></div></form>`);
-  $('#ledger-form [name="currency"]').closest('label').insertAdjacentHTML('beforebegin',type==='personal'?'<input type="hidden" name="projectType" value="personal">':projectFields({projectType:type}));
-  if(type==='personal')$('#ledger-form [name="title"]').value=t('我的日常');
-  const request=editorRequest,store=state.store,isCurrent=()=>request===editorRequest&&store===state.store;
-  $('#ledger-form').addEventListener('submit',e=>submitForm(e,async data=>{
-    if(!isCurrent()||!e.target.isConnected||!$('#action-dialog').open)return;
-    let id;
-    try{id=await store.createLedger({...Object.fromEntries(data),title:data.get('title').trim(),currency:data.get('currency'),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,ownerName:store.currentUser.displayName || t('我')});}
-    catch(error){if(isCurrent())throw error;return;}
-    if(!isCurrent())return;
-    state.view=data.get('projectType')==='personal'?'overview':'members';
-    const loaded=await finishSave(t('账本已创建。'),id,isCurrent);
-    if(continueEntry&&loaded&&isCurrent()&&state.snapshot?.ledger.id===id)await newExpense();
-  }));
+  return openLedgerCreation({store:state.store,getStore:()=>state.store,openDialog,submitForm,projectFields,errorSlot,
+    onCreated:async(id,projectType,{continueEntry,isCurrent})=>{
+      state.view=projectType==='personal'?'overview':'members';
+      const loaded=await finishSave(t('账本已创建。'),id,isCurrent);
+      if(continueEntry&&loaded&&isCurrent()&&state.snapshot?.ledger.id===id)await newExpense();
+    }},type,options);
 }
 function newMember() {
   openDialog(t('添加一位伙伴'),`<form id="member-form"><label class="form-field"><span class="field-label">${t('伙伴怎么称呼？')}</span><input class="form-input" name="name" maxlength="40" placeholder="${t('输入名字或熟悉的称呼')}" required autofocus></label><p class="form-hint">${t('现在就可以为这位伙伴记账，之后再邀请本人认领。')}</p><p id="member-duplicate" class="form-hint" hidden>${t('已有同名成员；如果是同一个人，无需重复添加。')}</p>${errorSlot()}<div class="form-actions"><button type="button" class="button secondary" data-action="close-dialog">${t('完成')}</button><button class="button primary" type="submit">${t('添加成员')}</button></div></form>`);
@@ -440,18 +428,18 @@ function editMember(id){
 async function newExpense(options={},resumeRecord=null) {
   if(!state.snapshot)return newLedger();
   if(archived()){toast(t('账本已归档，请由创建者恢复后再修改。'));return;}
-  const request=++editorRequest,store=state.store,id=state.snapshot.ledger.id;
+  const operation=dialogs.begin(),store=state.store,id=state.snapshot.ledger.id;
   let snapshot=state.snapshot;
   const returnPosition=window.scrollY;
   const scope=draftScope(store.mode,store.currentUser.uid,id),key=resumeRecord?.key||draftKey(scope,options);
   let record,storageError=false;
   try{record=resumeRecord||await draftStore.get(key);}catch{storageError=true;}
-  if(request!==editorRequest||state.store!==store||state.snapshot?.ledger.id!==id)return;
+  if(!operation.isCurrent()||state.store!==store||state.snapshot?.ledger.id!==id)return;
   if(record?.scope!==scope)record=null;
   if(record)options=record.options;
   if(options.expenseId){
     try{snapshot=await store.loadLedger(id);}catch(error){toast(errorMessage(error));return;}
-    if(request!==editorRequest||state.store!==store||state.snapshot?.ledger.id!==id)return;
+    if(!operation.isCurrent()||state.store!==store||state.snapshot?.ledger.id!==id)return;
     const latest=snapshot.expenses.find(row=>row.id===options.expenseId);
     if(!latest||latest.status!=='active'){toast(t('这笔费用已撤销。'));return;}
     if(record&&(record.options.initial.version||1)!==(latest.version||1)){
@@ -815,9 +803,10 @@ document.addEventListener('click', async event => {
   if(action==='account')accountDialog();
   if(action==='refresh') {el.disabled=true;try {if(params.has('invite')&&!state.inviteAccepted)await showInvitation(params.get('invite'));else await loadData();toast(t('账本已刷新。'));}catch(e){toast(errorMessage(e));}finally{el.disabled=false;}}
 });
-async function selectLedger(id) {++editorRequest;closeDialog();if(state.view==='personal')state.view='overview';try {await loadData(id);window.scrollTo({top:0,behavior:'instant'});}catch(error){toast(errorMessage(error));}}
+async function selectLedger(id) {closeDialog();if(state.view==='personal')state.view='overview';try {await loadData(id);window.scrollTo({top:0,behavior:'instant'});}catch(error){toast(errorMessage(error));}}
 $('#ledger-picker').addEventListener('change',event=>{if(event.target.value==='__import__'){render();importDialog();return;}if(event.target.value==='__new__'){event.target.value=state.snapshot?.ledger.id||'';newLedger();}else selectLedger(event.target.value);});
 window.addEventListener('hashchange',()=>{leaveEntry();if(!params.has('invite')||state.inviteAccepted){state.view=location.hash.slice(1)||'overview';if(state.store)render();}});
+window.addEventListener('popstate',leaveEntry);
 $('#language-picker').addEventListener('change',event=>setLanguage(event.target.value));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)activeEditor?.flush();autoSync?.wake();});
 document.addEventListener('focusout',()=>autoSync?.wake());
@@ -825,10 +814,6 @@ window.addEventListener('online',()=>autoSync?.wake());
 window.addEventListener('focus',()=>autoSync?.wake());
 window.addEventListener('pagehide',()=>{leaveEntry();activeEditor?.flush();++dataGeneration;autoSync?.stop();});
 window.addEventListener('pageshow',()=>{if(!state.starting&&state.store?.mode==='api')startAutoSync();});
-$('#action-dialog').addEventListener('close',()=>{if(!$('#action-dialog').open){activeEditor?.flush();activeEditor=null;dialogRefresh=null;}autoSync?.wake();});
-// Escape cancels the user's intent; the queued close event also fires after
-// successful creation, so it must not cancel that automatic continuation.
-$('#action-dialog').addEventListener('cancel',()=>{++editorRequest;});
 document.addEventListener('languagechange',()=>{
   const claimName=$('#claim-form input[name="name"]')?.value;
   translatePage();

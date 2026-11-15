@@ -1,4 +1,5 @@
 import refundMessages from '../public/scripts/refund-messages.mjs';
+import {createDialogLifecycle} from '../public/scripts/dialog-lifecycle.mjs';
 import {expenseDebts,remainingBetween,refundedTotal,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import {categories} from '../public/scripts/expense-analytics.mjs';
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ const source = (await readFile(new URL('../public/scripts/app.mjs', import.meta.
 function fixture(status) {
   const handlers = {}, nodes = new Map(), calls = [];
   const location = new URL('http://localhost/app.html?invite=token');
-  const context = vm.createContext({refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL, URLSearchParams, location,
+  const context = vm.createContext({createDialogLifecycle,refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL, URLSearchParams, location,
     history:{replaceState(_state,_title,url){location.href=String(url);}},
     document:{querySelectorAll(){return [];},querySelector(selector){if(selector.startsWith('#consumption-report')||selector==='#budget-form'||selector.startsWith('input[data-budget-month]'))return null;if(!nodes.has(selector))nodes.set(selector,{handlers:{},addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(selector);},addEventListener(type,fn){handlers[type]=fn;}},
     window:{addEventListener(){},scrollTo(){},scrollY:0},registerMessages(){},messages:{},analyticsMessages:{},categories,featureMessages:{},accountMessages:{},translatePage(){},t:(s,values={})=>s.replace(/\{(\w+)\}/g,(_,key)=>values[key]??''),

@@ -1,4 +1,5 @@
 import refundMessages from '../public/scripts/refund-messages.mjs';
+import {createDialogLifecycle} from '../public/scripts/dialog-lifecycle.mjs';
 import {expenseDebts,remainingBetween,refundedTotal,netExpenseAmount} from '../public/scripts/ledger-core.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +37,7 @@ async function fixture(){
  const add=(id,amount,date='2026-11-09')=>{snapshot.expenses.push({id,title:id,date,status:'active',payerMemberId:'other',amountCents:amount,category:'food',shares:{me:amount},repaid:{}});revision++;};
  add('first',1000);
  const store={currentUser:{uid:'me'},listUpdates:async()=>{reads++;return [{id:'a',revision}];},listLedgers:async()=>[structuredClone(ledger)],loadLedger:async()=>structuredClone(snapshot),personalConsumption:async()=>personalData([snapshot],'me')};
- const context=vm.createContext({refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL,URLSearchParams,location:w.location,history:w.history,document:w.document,window:w,setTimeout:w.setTimeout.bind(w),clearTimeout:w.clearTimeout.bind(w),registerMessages,t,translateError,formatMoney,analyticsMessages,messages:{},featureMessages:{},accountMessages:{},categories,consumptionRows,mountConsumption,translatePage(){},calendarDate:()=> '2026-11-09',createDraftStore:()=>({}),store});
+ const context=vm.createContext({createDialogLifecycle,refundMessages,expenseDebts,remainingBetween,refundedTotal,netExpenseAmount,URL,URLSearchParams,location:w.location,history:w.history,document:w.document,window:w,setTimeout:w.setTimeout.bind(w),clearTimeout:w.clearTimeout.bind(w),registerMessages,t,translateError,formatMoney,analyticsMessages,messages:{},featureMessages:{},accountMessages:{},categories,consumptionRows,mountConsumption,translatePage(){},calendarDate:()=> '2026-11-09',createDraftStore:()=>({}),store});
  vm.runInContext(source,context);vm.runInContext("state.store=store;state.starting=false;",context);
  await vm.runInContext('loadData()',context);await tick();
  return {dom,context,snapshot,add,touch:()=>revision++,get reads(){return reads;},sync:()=>vm.runInContext('syncChanges()',context),root:w.document};

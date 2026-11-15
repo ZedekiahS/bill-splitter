@@ -25,6 +25,10 @@ async function leaveCreation(f,way){
  if(way==='hash'){
   const changed=new Promise(resolve=>f.w.addEventListener('hashchange',resolve,{once:true}));
   f.w.location.hash='expenses';await changed;
+ }else if(way==='popstate'){
+  f.w.history.pushState(null,'','?visit=temporary'+f.w.location.hash);
+  const returned=new Promise(resolve=>f.w.addEventListener('popstate',resolve,{once:true}));
+  f.w.history.back();await returned;
  }else{
   f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide',{persisted:true}));
   f.w.dispatchEvent(new f.w.PageTransitionEvent('pageshow',{persisted:true}));
@@ -206,7 +210,7 @@ test('returning to an existing personal ledger also cancels a delayed load on na
  assert.equal(f.$('#action-dialog').open,false);assert.equal(f.run('state.view'),'expenses');assert.equal((await f.store.listLedgers()).length,1);
 });
 
-for(const type of ['personal','general'])for(const way of ['hash','cached-return'])for(const submitted of [false,true])test(`obsolete ${type} creation cannot submit again after ${way}, submitted=${submitted}`,async()=>{
+for(const type of ['personal','general'])for(const way of ['hash','cached-return','popstate'])for(const submitted of [false,true])test(`obsolete ${type} creation cannot submit again after ${way}, submitted=${submitted}`,async()=>{
  const f=await fixture(),old=await f.store.createLedger({title:'Existing shared',currency:'CNY'});
  await f.run('loadData()');
  const gate=deferred(),create=f.store.createLedger;let writes=0;

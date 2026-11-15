@@ -37,6 +37,9 @@ an already-created ledger remains available and is reused on the next visit.
 [Cancellation and delayed-result checks](docs/review/personal-entry-cancellation-2026-11-11.md).
 Navigation also closes obsolete creation forms, and their submit handlers cannot
 send new writes. [Creation-form lifecycle follow-up](docs/review/creation-form-lifecycle-2026-11-12.md).
+Creation and dialog lifecycle now have separate modules; normalized static-path
+checks and safe request diagnostics protect the running app.
+[Architecture follow-up and verification](docs/review/architecture-follow-up-2026-11-15.md).
 
 ## Linked merchant refunds
 
