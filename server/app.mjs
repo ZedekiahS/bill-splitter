@@ -1,4 +1,4 @@
-import Fastify, {LogController} from 'fastify';
+import Fastify from 'fastify';
 import staticFiles from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { authService,HttpError } from './auth.mjs';
@@ -6,12 +6,12 @@ import { ledgerService } from './ledgers.mjs';
 import { exportStream } from './ledger-export.mjs';
 import {importUploads} from './import-uploads.mjs';
 import {randomUUID} from 'node:crypto';
-import {errorDiagnostic,loggerOptions,installRequestLogging} from './request-logging.mjs';
+import {errorDiagnostic,loggerOptions,installRequestLogging,RequestLogController} from './request-logging.mjs';
 
 export async function buildApp({pool,origins,production=false,registration=true,trustProxy=false,logger=false}){
   const allowed=new Set(origins);
   if(!allowed.size||production&&[...allowed].some(origin=>!origin.startsWith('https://')))throw new Error('Production requires explicit HTTPS PUBLIC_ORIGINS.');
-  const app=Fastify({logger:logger?loggerOptions(logger===true?{}:logger):false,logController:new LogController({disableRequestLogging:true}),requestIdHeader:false,genReqId:randomUUID,trustProxy,bodyLimit:10*1024*1024,requestTimeout:300000});
+  const app=Fastify({logger:logger?loggerOptions(logger===true?{}:logger):false,logController:new RequestLogController(),requestIdHeader:false,genReqId:randomUUID,trustProxy,bodyLimit:10*1024*1024,requestTimeout:300000});
   installRequestLogging(app);
   const auth=authService(pool,{secure:production,registration}),ledgers=ledgerService(pool);
   const uploads=importUploads();
