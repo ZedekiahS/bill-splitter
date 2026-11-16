@@ -63,21 +63,21 @@ async function exportFixture(t){
  return {...captureLog,bytes,open,setRead:fn=>{readReceipt=fn;}};
 }
 
-test('ZIP attachment failure after headers has one safe correlated failure, not a successful completion',{timeout:10000},async t=>{
+for(const code of ['08006','ECONNRESET'])test(`ZIP attachment ${code} after headers has one safe correlated failure, not a successful completion`,{timeout:10000},async t=>{
  const f=await exportFixture(t);let fail,started;
  const reading=new Promise(resolve=>{started=resolve;});
  f.setRead(()=>new Promise((_resolve,reject)=>{fail=reject;started();}));
  const response=await f.open();assert.equal(response.statusCode,200);
  const body=(async()=>{for await(const _chunk of response){/* consume actual network response */}})();
  await reading;
- fail(Object.assign(new Error('private-zip-canary\nserver/private-canary.mjs:12:34'),{code:'08006'}));
+ fail(Object.assign(new Error('private-zip-canary\nserver/private-canary.mjs:12:34'),{code}));
  await assert.rejects(body);
  await new Promise(resolve=>setImmediate(resolve));
  const logs=f.logs().filter(row=>row.reqId===response.headers['x-request-id']);
  const failures=logs.filter(row=>row.event==='request.failed');assert.equal(failures.length,1);
  const failure=failures[0];assert.equal(failure.outcome,'failed');assert.equal(failure.status,200);
  assert.equal(failure.method,'GET');assert.equal(failure.route,'/api/ledgers/:id/export');assert.ok(failure.durationMs>=0);
- assert.equal(failure.error.code,'08006');assert.equal(failure.error.type,'Error');
+ assert.equal(failure.error.code,code);assert.equal(failure.error.type,'Error');assert.equal(failure.headersSent,true);
  assert.equal(logs.filter(row=>row.event==='request.completed').length,0);
  assert.doesNotMatch(f.raw(),/private-zip-canary|private-canary|private-query|Private purchase|Private ledger|private-receipt|bs_session/);
 });

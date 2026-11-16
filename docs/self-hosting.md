@@ -84,6 +84,10 @@ node --env-file=.env.test scripts/lan-preview.mjs
 查看 `outcome`；中断不会记为 `request.completed`。完成记录表示服务端响应写完，
 不代表用户已把文件保存到设备。
 
+流错误按来源分类：附件查询或 ZIP 数据源报错（包括 `ECONNRESET`）为 `failed`；
+响应连接提前断开为 `aborted`。错误代码不能单独证明用户取消了下载，`aborted`
+也可能是下游网络断开，不代表已确认用户主动取消。
+
 静态文件权限在 `@fastify/static` 解析后的请求及最终文件路径上判断，HTML 仅允许
 `index.html` 和 `app.html`，旧 HTML 的编码路径也被拒绝。历史源码仍在仓库中。
 

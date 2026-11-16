@@ -37,17 +37,23 @@ export function loggerOptions(options={}){
  return {...options,serializers:{req:()=>undefined,res:()=>undefined,err:errorDiagnostic}};
 }
 const interrupted=new WeakSet();
-function logInterrupted(error,request,reply){
+const sourceErrors=new WeakMap();
+function logInterrupted(error,request,reply,outcome){
  if(interrupted.has(reply))return;
  interrupted.add(reply);
- const outcome=!error||error.code==='ERR_STREAM_PREMATURE_CLOSE'||error.code==='ECONNRESET'?'aborted':'failed';
  request.log.warn({event:'request.failed',outcome,method:request.method,route:request.routeOptions.url||'unmatched',
   status:reply.statusCode,headersSent:reply.raw.headersSent,durationMs:reply.elapsedTime,
   ...(error?{error:errorDiagnostic(error)}:{})},'Response interrupted');
 }
 export class RequestLogController extends LogController{
  constructor(){super({disableRequestLogging:true});}
- streamError(error,request,reply){logInterrupted(error,request,reply);}
+ streamError(error,request,reply){
+  // A reset in the source (e.g. PostgreSQL) is not a client cancellation.
+  // Source errors are observed before Fastify handles/destroys the response.
+  const sourceFailed=sourceErrors.get(reply)===error;
+  const disconnected=reply.raw.destroyed||request.raw.aborted;
+  logInterrupted(error,request,reply,sourceFailed||!disconnected?'failed':'aborted');
+ }
 }
 export function installRequestLogging(app){
  app.addHook('onRequest',async(request,reply)=>{
@@ -55,8 +61,14 @@ export function installRequestLogging(app){
   reply.raw.once('close',()=>{
    // Let the stream controller retain the original error first. This fallback
    // also covers disconnected responses that never reach onResponse.
-   if(reply.raw.writableFinished===false)setImmediate(()=>logInterrupted(null,request,reply));
+   if(reply.raw.writableFinished===false)setImmediate(()=>logInterrupted(null,request,reply,'aborted'));
   });
+ });
+ app.addHook('onSend',async(_request,reply,payload)=>{
+  if(typeof payload?.pipe==='function'&&typeof payload.once==='function'){
+   payload.once('error',error=>sourceErrors.set(reply,error));
+  }
+  return payload;
  });
  app.addHook('onResponse',async(request,reply)=>{
   if(interrupted.has(reply))return;
