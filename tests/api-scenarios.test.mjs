@@ -929,3 +929,53 @@ test('personal daily ledger records self-only spending and supports explicit sha
  assert.equal(reportA.rows.filter(r=>r.ledgerId===id).reduce((n,r)=>n+r.amountCents,0),7250);
  assert.equal(reportB.rows.filter(r=>r.ledgerId===id).reduce((n,r)=>n+r.amountCents,0),4000);
 });
+
+test('acceptance sample 1: three payers reconcile 990 without silently netting five transfers',async()=>{
+ const f=await trio();
+ const dinner=await command(alice,f.id,'addExpense',[expense('owner',{owner:10000,[f.b]:10000,[f.c]:10000},30000,{title:'晚餐'})]);
+ const taxi=await command(bob,f.id,'addExpense',[expense(f.b,{owner:4500,[f.b]:4500},9000,{title:'打车'})]);
+ const hotel=await command(chen,f.id,'addExpense',[expense(f.c,{owner:20000,[f.b]:15000,[f.c]:25000},60000,{title:'住宿'})]);
+ let s=await consistent(f);
+ assert.equal(s.expenses.reduce((sum,e)=>sum+e.amountCents,0),99000);
+ assert.deepEqual(Object.fromEntries(memberBalances(s).map(m=>[m.memberId,m.balanceCents])),{owner:-4500,[f.b]:-20500,[f.c]:25000});
+ assert.equal(s.expenses.flatMap(expenseDebts).length,5);
+ const assertConsumption=async()=>{
+  for(const [user,expected]of [[alice,34500],[bob,29500],[chen,35000]]){
+   const report=await good(user,'GET','/api/personal-consumption');
+   assert.equal(report.rows.filter(r=>r.ledgerId===f.id).reduce((sum,r)=>sum+r.amountCents,0),expected);
+  }
+ };
+ await assertConsumption();
+ for(const [user,bill,from,amount]of [[alice,dinner,f.b,10000],[alice,dinner,f.c,10000],[bob,taxi,'owner',4500],[chen,hotel,'owner',20000],[chen,hotel,f.b,15000]]){
+  await command(user,f.id,'recordPayment',[{expenseId:bill,fromMemberId:from,amountCents:amount}]);
+ }
+ s=await consistent(f);assert.equal(s.payments.length,5);assert.equal(s.expenses.flatMap(expenseDebts).length,0);
+ assert.ok(memberBalances(s).every(m=>m.balanceCents===0));await assertConsumption();
+});
+
+test('acceptance sample 2: two refunds after settlement preserve 600 original and 360 net',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:20000,[f.b]:20000,[f.c]:20000},60000)]);
+ for(const from of [f.b,f.c])await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:from,amountCents:20000}]);
+ for(const [amount,share,net]of [[15000,5000,45000],[9000,3000,36000]]){
+  await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,amount,{owner:share,[f.b]:share,[f.c]:share})]);
+  let s=await consistent(f),e=s.expenses[0];assert.equal(e.amountCents,60000);assert.equal(netExpenseAmount(e),net);
+  assert.equal(remainingBetween(e,'owner',f.b),share);assert.equal(remainingBetween(e,'owner',f.c),share);
+  await returnPayment(f,bill,f.b,share,bob);await returnPayment(f,bill,f.c,share,chen);
+  s=await consistent(f);assert.deepEqual(expenseDebts(s.expenses[0]),[]);
+ }
+ const s=await consistent(f);assert.equal(s.payments.length,6);assert.equal(s.expenses[0].refunds.length,2);
+ for(const user of [alice,bob,chen]){const report=await good(user,'GET','/api/personal-consumption');assert.equal(report.rows.filter(r=>r.ledgerId===f.id).reduce((sum,r)=>sum+r.amountCents,0),12000);}
+});
+
+test('acceptance sample 3: partial 80 repayment then 300 and 150 refunds reverses only B direction',async()=>{
+ const f=await trio(),bill=await command(alice,f.id,'addExpense',[expense('owner',{owner:20000,[f.b]:20000,[f.c]:20000},60000)]);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.b,amountCents:8000}]);
+ await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,30000,{owner:10000,[f.b]:10000,[f.c]:10000})]);
+ let e=(await consistent(f)).expenses[0];assert.equal(remainingBetween(e,f.b,'owner'),2000);assert.equal(remainingBetween(e,f.c,'owner'),10000);
+ await command(alice,f.id,'recordRefund',[await refundPayload(f,bill,15000,{owner:5000,[f.b]:5000,[f.c]:5000})]);
+ e=(await consistent(f)).expenses[0];assert.equal(remainingBetween(e,'owner',f.b),3000);assert.equal(remainingBetween(e,f.c,'owner'),5000);
+ await returnPayment(f,bill,f.b,3000,bob);
+ await command(alice,f.id,'recordPayment',[{expenseId:bill,fromMemberId:f.c,amountCents:5000}]);
+ const s=await consistent(f);assert.deepEqual(expenseDebts(s.expenses[0]),[]);assert.equal(netExpenseAmount(s.expenses[0]),15000);assert.equal(s.payments.length,3);
+ for(const user of [alice,bob,chen]){const report=await good(user,'GET','/api/personal-consumption');assert.equal(report.rows.filter(r=>r.ledgerId===f.id).reduce((sum,r)=>sum+r.amountCents,0),5000);}
+});

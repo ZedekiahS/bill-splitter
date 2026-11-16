@@ -203,6 +203,9 @@ through the new server, and existing data has not been converted automatically.
 
 ## Tests
 
+For all current features, manual steps, expected balances, multi-account/network
+scenarios and phone checks, see [the complete acceptance plan](docs/full-test-plan.md).
+
 ```powershell
 npm test
 # Set TEST_DATABASE_URL in .env.test to a disposable local database ending _test.

@@ -228,6 +228,7 @@ export default {
   '新建账本': 'New ledger',
   '已撤销': 'Reversed',
   '已结清': 'Settled',
+  '我无待收付': 'Nothing for me to settle',
   '部分已还': 'Partly paid',
   '待结清': 'Outstanding',
   '这里还没有账单': 'No expenses yet',

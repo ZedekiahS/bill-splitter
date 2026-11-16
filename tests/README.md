@@ -1,5 +1,12 @@
 # Bill Splitter tests
 
+Current feature-by-feature manual steps, expected results, multi-account fixtures,
+mobile checks and automation mapping: [full acceptance plan](../docs/full-test-plan.md)
+(baseline `2558b61`, November 16, 2026). Counts in the dated sections below are
+historical evidence, not the current suite total. The November 16 full run passed
+366 local tests and 82 PostgreSQL/API tests. See the [current results and remaining
+device checks](../docs/review/full-acceptance-2026-11-16.md).
+
 Run commands from the repository directory with Node 22+. Calculation suites use
 the shipped application modules with lightweight stubs or isolated storage. Run
 `npm ci` first for the IndexedDB and ZIP test dependencies; local suites need no
@@ -12,7 +19,7 @@ local database ending in `_test`, then run `npm run test:api`. The suite migrate
 and **truncates fixture tables** in that database. Non-loopback hosts and other
 database names are rejected. Always use a disposable test database.
 
-The 52 tests use real PostgreSQL transactions through Fastify request injection
+The 82 tests use real PostgreSQL transactions through Fastify request injection
 and a loopback HTTP listener with independent session cookies.
 Files run sequentially because both reset the same fixture database. Coverage:
 registration, session revocation, CSRF, request limits, authenticated ownership,

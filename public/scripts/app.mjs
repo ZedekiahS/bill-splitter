@@ -277,7 +277,7 @@ function expenseRows(list) {
   return `<div class="expense-list">${list.map(e=>{
     const id=mine()?.id;
     const debts=expenseDebts(e),incoming=debts.filter(d=>d.toMemberId===id).reduce((n,d)=>n+d.amountCents,0),outgoing=debts.filter(d=>d.fromMemberId===id).reduce((n,d)=>n+d.amountCents,0);
-    const relation=e.status==='reversed'?t('已撤销'):[incoming?`${t('待收')} ${money(incoming)}`:'',outgoing?`${t('我待付')} ${money(outgoing)}`:''].filter(Boolean).join(' · ')||t('已结清');
+    const relation=e.status==='reversed'?t('已撤销'):[incoming?`${t('待收')} ${money(incoming)}`:'',outgoing?`${t('我待付')} ${money(outgoing)}`:''].filter(Boolean).join(' · ')||(debts.length?t('我无待收付'):t('已结清'));
     return `<button class="expense-row" data-expense="${escape(e.id)}"><span class="expense-icon">${icon('receipt')}</span><span class="expense-info"><span class="expense-title">${escape(e.title)} ${statusFor(e)}</span><span class="expense-meta">${t('{name}垫付', {name:escape(memberName(e.payerMemberId))})} · ${escape(dateText(e.date))} · ${t('{count}人参与', {count:Object.keys(e.shares).length})}</span></span><span class="expense-amount"><strong>${money(netExpenseAmount(e))}</strong><small>${relation}</small></span>${icon('arrow')}</button>`;
   }).join('')}</div>`;
 }

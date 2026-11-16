@@ -267,3 +267,20 @@ test('clicking the current navigation tab ends an unsubmitted creation without r
  assert.equal((await f.store.listLedgers()).length,0);
  await f.run('personalLedger()');assert.ok(f.$('#ledger-form'));assert.equal(f.$('#action-dialog').open,true);
 });
+
+for(const language of ['zh-CN','en'])test(`expense row distinguishes no personal debt from globally settled: ${language}`,async()=>{
+ const f=await fixture(language),id=await f.store.createLedger({title:'Shared',currency:'CNY'}),b=await f.store.addMember(id,'B'),c=await f.store.addMember(id,'C');
+ const absent=await f.store.addExpense(id,{title:'Taxi',date:'2026-11-16',amountCents:2000,payerMemberId:b,shares:{[b]:1000,[c]:1000}});
+ const own=await f.store.addExpense(id,{title:'Dinner',date:'2026-11-16',amountCents:3000,payerMemberId:b,shares:{owner:1000,[b]:1000,[c]:1000}});
+ const refresh=()=>f.run(`state.view='expenses';loadData(${JSON.stringify(id)})`);
+ const relation=bill=>f.$(`[data-expense="${bill}"] .expense-amount small`).textContent;
+ await refresh();assert.equal(relation(absent),language==='en'?'Nothing for me to settle':'我无待收付');
+ assert.ok(f.$(`[data-expense="${absent}"] .badge`).textContent!== (language==='en'?'Settled':'已结清'));
+ assert.match(relation(own),/10\.00/);
+ await f.store.recordPayment(id,{expenseId:own,fromMemberId:'owner',toMemberId:b,expectedVersion:1,expectedRemaining:1000,amountCents:1000,date:'2026-11-16'});
+ await refresh();assert.equal(relation(own),language==='en'?'Nothing for me to settle':'我无待收付');
+ let e=(await f.store.loadLedger(id)).expenses.find(e=>e.id===own);
+ await f.store.recordPayment(id,{expenseId:own,fromMemberId:c,toMemberId:b,expectedVersion:e.version,expectedRemaining:1000,amountCents:1000,date:'2026-11-16'});
+ await refresh();assert.equal(relation(own),language==='en'?'Settled':'已结清');
+ await f.store.reverseExpense(id,absent);await refresh();assert.equal(relation(absent),language==='en'?'Reversed':'已撤销');
+});
